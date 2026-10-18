@@ -5,6 +5,7 @@
   <img src="https://img.shields.io/badge/GTK_3-75507B?style=for-the-badge&logo=gtk&logoColor=white" alt="GTK 3" />
   <img src="https://img.shields.io/badge/X11-000000?style=for-the-badge&logo=xorg&logoColor=white" alt="X11" />
   <img src="https://img.shields.io/badge/Make-064F8C?style=for-the-badge&logo=gnu&logoColor=white" alt="Makefile" />
+  <img src="https://img.shields.io/badge/build-passed-brightgreen?style=for-the-badge" alt="Build Passed" />
   <img src="https://img.shields.io/badge/Shell_Script-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white" alt="Shell Script" />
   <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
 </p>

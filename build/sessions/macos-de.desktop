@@ -1,6 +1,0 @@
-[Desktop Entry]
-Name=macOS-DE
-Comment=macOS-style X11 desktop environment and window manager
-Exec=/usr/share/macos-de/bin/macos-de-session
-Type=Application
-DesktopNames=macOS-DE
