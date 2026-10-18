@@ -5,9 +5,8 @@
 *.so
 *.dylib
 
-# --- For some noob who dosn't know how to push code to github --- 
-how-to-push
-how-to-push.txt
+ho
+ho.txt
 
 # --- Object Files ---
 *.o
