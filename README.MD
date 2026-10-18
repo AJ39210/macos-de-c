@@ -154,6 +154,7 @@ window_manager/       Desktop window-management integration
 
 ## Tree of the Project
 
+'''text
 .
 ├── apps
 │   ├── DE-settings
@@ -465,6 +466,7 @@ window_manager/       Desktop window-management integration
 
 41-Dirs
 267-Files
+'''
 
 ## Report bugs and get help !
 
