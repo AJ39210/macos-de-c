@@ -1,0 +1,22 @@
+# --- Compiled Binaries & Executables ---
+*.out
+*.exe
+*.dll
+*.so
+*.dylib
+
+# --- Object Files ---
+*.o
+*.obj
+
+# --- Assembly / Linker Outputs ---
+*.bin
+*.elf
+*.img
+*.iso
+*.map
+
+# --- Build Directories ---
+build/
+
+#signed AJ ( Predescu Sebastian ) 18-10-2026
