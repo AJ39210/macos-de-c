@@ -1,0 +1,51 @@
+window.macos-dock-window {
+    background-color: transparent;
+}
+
+.macos-dock {
+    background-color: rgba(105, 110, 120, 0.22);
+    background-image: linear-gradient(
+        to bottom,
+        rgba(205, 210, 220, 0.24),
+        rgba(90, 95, 105, 0.18)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.48);
+    border-radius: 20px;
+    box-shadow:
+        0 8px 24px rgba(0, 0, 0, 0.24),
+        inset 0 1px 0 rgba(255, 255, 255, 0.58);
+    padding: 5px 8px;
+}
+
+.dock-item {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 13px;
+    min-width: 54px;
+    min-height: 54px;
+    padding: 2px;
+    transition: background-color 150ms ease;
+}
+
+.dock-item:hover {
+    background-color: rgba(255, 255, 255, 0.28);
+}
+
+.dock-item:active {
+    background-color: rgba(255, 255, 255, 0.40);
+}
+
+.running-indicator {
+    background-color: rgba(255, 255, 255, 0.95);
+    border-radius: 2px;
+    min-width: 12px;
+    min-height: 2px;
+}
+
+.dock-separator {
+    background-color: rgba(255, 255, 255, 0.62);
+    min-width: 1px;
+    min-height: 34px;
+    margin: 0 3px;
+}

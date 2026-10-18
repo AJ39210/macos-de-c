@@ -1,0 +1,132 @@
+window.settings-window {
+    font-family: "Cantarell", "Segoe UI", sans-serif;
+    font-size: 10pt;
+}
+
+window.settings-window.dark {
+    background-color: #1d1f22;
+    color: #f1f3f5;
+}
+
+window.settings-window.light {
+    background-color: #f4f5f7;
+    color: #202124;
+}
+
+.settings-window.dark notebook,
+.settings-window.dark notebook > stack {
+    background-color: #1d1f22;
+}
+
+.settings-window.light notebook,
+.settings-window.light notebook > stack {
+    background-color: #f4f5f7;
+}
+
+.settings-window.dark notebook header {
+    background-color: #25282d;
+    border-bottom: 1px solid #363a41;
+}
+
+.settings-window.light notebook header {
+    background-color: #e9ebef;
+    border-bottom: 1px solid #d5d9df;
+}
+
+.settings-window.dark notebook tab {
+    color: #aeb4bd;
+    padding: 11px 17px;
+}
+
+.settings-window.light notebook tab {
+    color: #555b65;
+    padding: 11px 17px;
+}
+
+.settings-window.dark notebook tab:checked {
+    color: #ffffff;
+    background-color: #343941;
+}
+
+.settings-window.light notebook tab:checked {
+    color: #111827;
+    background-color: #ffffff;
+}
+
+.settings-window.dark .settings-card {
+    background-color: #272a30;
+    border: 1px solid #393d45;
+    border-radius: 12px;
+    padding: 18px;
+}
+
+.settings-window.light .settings-card {
+    background-color: #ffffff;
+    border: 1px solid #dfe2e7;
+    border-radius: 12px;
+    padding: 18px;
+}
+
+.settings-window.dark .card-title,
+.settings-window.dark .setting-title,
+.settings-window.dark .app-title {
+    color: #f4f5f7;
+}
+
+.settings-window.light .card-title,
+.settings-window.light .setting-title,
+.settings-window.light .app-title {
+    color: #202124;
+}
+
+.card-title {
+    font-size: 12pt;
+    font-weight: 700;
+}
+
+.setting-title {
+    font-weight: 600;
+}
+
+.app-title {
+    font-size: 18pt;
+    font-weight: 700;
+}
+
+.settings-window.dark .muted {
+    color: #aeb4bd;
+}
+
+.settings-window.light .muted {
+    color: #626873;
+}
+
+.settings-window.dark button {
+    color: #f1f3f5;
+    background-image: none;
+    background-color: #383d45;
+    border: 1px solid #4a505a;
+    border-radius: 7px;
+    padding: 7px 12px;
+}
+
+.settings-window.light button {
+    color: #202124;
+    background-image: none;
+    background-color: #f5f6f8;
+    border: 1px solid #d4d8de;
+    border-radius: 7px;
+    padding: 7px 12px;
+}
+
+.settings-window.dark button:hover {
+    background-color: #484e58;
+}
+
+.settings-window.light button:hover {
+    background-color: #e9edf3;
+}
+
+.settings-window.dark image {
+    color: #f1f3f5;
+}

@@ -1,0 +1,66 @@
+/* Finder Window Styling */
+window {
+    background-color: #e8e8e8;
+    color: #333333;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Sidebar Styling */
+.sidebar {
+    background-color: #f3f3f3;
+    color: #444444;
+    border-right: 1px solid #dcdcdc;
+}
+
+.sidebar label {
+    color: #444444;
+}
+
+.sidebar row:selected {
+    background-color: rgba(0, 122, 255, 0.18);
+}
+
+.sidebar row:selected label {
+    color: #075ec8;
+}
+
+/* Toolbar Styling */
+.toolbar {
+    background-color: #ececec;
+    border-bottom: 1px solid #d5d5d5;
+    padding: 8px 12px;
+}
+
+/* Main Content Grid */
+flowbox {
+    background-color: #ffffff;
+}
+
+flowboxchild {
+    background: transparent;
+    border-radius: 8px;
+    padding: 6px;
+}
+
+/* Keep text black and crisp even when selected */
+flowboxchild:selected {
+    background-color: rgba(0, 122, 255, 0.24);
+    border: 1px solid rgba(0, 122, 255, 0.48);
+}
+
+flowboxchild:hover {
+    background-color: rgba(0, 122, 255, 0.10);
+}
+
+flowboxchild:selected label {
+    color: #111111;
+}
+
+/* Search Entry */
+searchbar, entry {
+    background-color: #ffffff;
+    color: #222222;
+    border: 1px solid #cccccc;
+    border-radius: 6px;
+    padding: 4px 8px;
+}

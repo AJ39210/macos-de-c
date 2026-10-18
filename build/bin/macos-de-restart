@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+supervisor_pid=${MACOS_DE_SUPERVISOR_PID:-}
+case "$supervisor_pid" in
+    ''|*[!0-9]*)
+        echo "macos-de-restart must be run inside a supervised macOS-DE session." >&2
+        exit 1
+        ;;
+esac
+
+if ! kill -0 "$supervisor_pid" 2>/dev/null; then
+    echo "The macOS-DE session supervisor is no longer running." >&2
+    exit 1
+fi
+
+if ! kill -USR1 "$supervisor_pid" 2>/dev/null; then
+    echo "Could not request a macOS-DE session restart." >&2
+    exit 1
+fi
+
+echo "Restarting the macOS-DE desktop session..."

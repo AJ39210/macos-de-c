@@ -1,0 +1,62 @@
+* {
+    font-family: "Cantarell", "Sans";
+}
+
+window {
+    background: #f5f6fa;
+    color: #202635;
+}
+
+#title {
+    font-size: 25px;
+    font-weight: 700;
+}
+
+#subtitle {
+    color: #727b8c;
+    font-size: 13px;
+}
+
+#section-title {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+button {
+    padding: 8px 13px;
+    border-radius: 8px;
+}
+
+#primary-action {
+    background: #2463eb;
+    color: #ffffff;
+    border-color: #2463eb;
+    font-weight: 700;
+}
+
+#primary-action:hover {
+    background: #174fc9;
+}
+
+scrolledwindow {
+    background: #ffffff;
+    border: 1px solid #e2e6ef;
+    border-radius: 10px;
+}
+
+list row {
+    padding: 9px 11px;
+    border-bottom: 1px solid #edf0f5;
+}
+
+list row:last-child {
+    border-bottom: none;
+}
+
+list row:hover {
+    background: #f1f5ff;
+}
+
+#empty-history {
+    color: #7c8494;
+}

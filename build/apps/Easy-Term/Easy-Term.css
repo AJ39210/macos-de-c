@@ -1,0 +1,88 @@
+window.easy-term {
+    font-family: "Cantarell", "Segoe UI", sans-serif;
+}
+
+window.easy-term.dark {
+    background: #17191e;
+    color: #eef0f3;
+}
+
+window.easy-term.light {
+    background: #f4f5f7;
+    color: #252a32;
+}
+
+window.easy-term.dark .terminal-toolbar {
+    background: #22252b;
+    color: #f5f6f8;
+    border-bottom: 1px solid #343840;
+}
+
+window.easy-term.light .terminal-toolbar {
+    background: #ffffff;
+    color: #252a32;
+    border-bottom: 1px solid #dfe2e7;
+}
+
+window.easy-term.dark notebook,
+window.easy-term.dark notebook > stack,
+window.easy-term.dark notebook header {
+    background: #1b1e24;
+}
+
+window.easy-term.light notebook,
+window.easy-term.light notebook > stack,
+window.easy-term.light notebook header {
+    background: #f4f5f7;
+}
+
+window.easy-term notebook tab {
+    padding: 7px 10px;
+}
+
+window.easy-term.dark .settings-panel {
+    background: #20232a;
+    border-left: 1px solid #363a43;
+}
+
+window.easy-term.light .settings-panel {
+    background: #ffffff;
+    border-left: 1px solid #dfe2e7;
+}
+
+.settings-heading {
+    font-size: 15pt;
+    font-weight: 700;
+}
+
+.settings-section {
+    font-weight: 700;
+    margin-top: 8px;
+}
+
+.status-line {
+    padding: 5px 10px;
+    font-size: 9pt;
+}
+
+window.easy-term.dark .status-line {
+    color: #aeb5c0;
+    background: #1b1e24;
+}
+
+window.easy-term.light .status-line {
+    color: #626a76;
+    background: #f4f5f7;
+}
+
+.status-line.error {
+    color: #e5484d;
+}
+
+button.tab-close {
+    padding: 0 3px;
+    min-height: 18px;
+    min-width: 18px;
+    border: 0;
+    background: transparent;
+}

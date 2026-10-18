@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Screenshot Manager
+Comment=Capture and manage desktop screenshots
+Exec=/usr/share/macos-de/apps/screenshoot-manager/screenshoot-manager
+Icon=/usr/share/macos-de/apps/screenshoot-manager/logo.png
+Terminal=false
+Type=Application
+Categories=Utility;

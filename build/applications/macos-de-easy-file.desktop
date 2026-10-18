@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Easy-File
+Comment=Browse files in macOS-DE
+Exec=/usr/share/macos-de/apps/Easy-File/Easy-File
+Icon=/usr/share/macos-de/apps/Easy-File/logo.png
+Terminal=false
+Type=Application
+Categories=Utility;FileTools;

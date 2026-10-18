@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=DE Settings
+Comment=Configure macOS-DE appearance and system preferences
+Exec=/usr/share/macos-de/apps/DE-settings/DE-settings
+Icon=/usr/share/macos-de/apps/DE-settings/logo.png
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;

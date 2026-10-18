@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Easy-Term
+Comment=Terminal for macOS-DE
+Exec=/usr/share/macos-de/apps/Easy-Term/Easy-Term
+Icon=/usr/share/macos-de/apps/Easy-Term/logo.png
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
