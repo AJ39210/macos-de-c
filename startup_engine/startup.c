@@ -40,6 +40,86 @@ typedef struct {
 
 static StartupContext *ctx = NULL;
 
+static void on_startup_audio_finished(GObject *source_object,
+                                      GAsyncResult *result,
+                                      gpointer user_data) {
+    GError *error = NULL;
+    if (!g_subprocess_wait_check_finish(
+            G_SUBPROCESS(source_object), result, &error)) {
+        g_warning("Startup audio playback failed: %s",
+                  error ? error->message : "unknown player error");
+        g_clear_error(&error);
+    }
+    g_object_unref(source_object);
+    (void)user_data;
+}
+
+static void play_startup_audio(const char *base_path) {
+    char *audio_path = g_build_filename(base_path, "start-up.mp3", NULL);
+    if (!g_file_test(audio_path, G_FILE_TEST_IS_REGULAR)) {
+        g_warning("Startup audio file was not found: %s", audio_path);
+        g_free(audio_path);
+        return;
+    }
+
+    char *player = g_find_program_in_path("ffplay");
+    const char *argv[8] = { NULL };
+    if (player != NULL) {
+        argv[0] = player;
+        argv[1] = "-nodisp";
+        argv[2] = "-autoexit";
+        argv[3] = "-loglevel";
+        argv[4] = "error";
+        argv[5] = "-nostats";
+        argv[6] = audio_path;
+    } else {
+        player = g_find_program_in_path("mpv");
+        if (player != NULL) {
+            argv[0] = player;
+            argv[1] = "--no-video";
+            argv[2] = "--really-quiet";
+            argv[3] = audio_path;
+        } else {
+            player = g_find_program_in_path("mpg123");
+            if (player != NULL) {
+                argv[0] = player;
+                argv[1] = "-q";
+                argv[2] = audio_path;
+            } else {
+                player = g_find_program_in_path("gst-play-1.0");
+                if (player != NULL) {
+                    argv[0] = player;
+                    argv[1] = "--no-interactive";
+                    argv[2] = audio_path;
+                }
+            }
+        }
+    }
+
+    if (player == NULL) {
+        g_warning("Cannot play startup audio: install ffmpeg (ffplay), mpv, "
+                  "mpg123, or GStreamer tools.");
+        g_free(audio_path);
+        return;
+    }
+
+    GError *error = NULL;
+    GSubprocess *process = g_subprocess_newv(
+        argv, G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+              G_SUBPROCESS_FLAGS_STDERR_SILENCE, &error);
+    if (process == NULL) {
+        g_warning("Could not start startup audio player %s: %s",
+                  player, error->message);
+        g_clear_error(&error);
+    } else {
+        g_subprocess_wait_check_async(process, NULL,
+                                      on_startup_audio_finished, NULL);
+    }
+
+    g_free(player);
+    g_free(audio_path);
+}
+
 static void free_startup_context(StartupContext *sc) {
     for (guint i = 0; i < BUFFERED_STARTUP_FRAMES; i++) {
         g_clear_object(&sc->frames[i]);
@@ -287,6 +367,7 @@ void start_system_boot(const char *base_path, StartupCallback callback, gpointer
     g_signal_connect(sc->window, "realize", G_CALLBACK(on_window_realize), NULL);
     g_signal_connect(sc->drawing_area, "draw", G_CALLBACK(on_draw_event), sc);
     gtk_widget_show_all(sc->window);
+    play_startup_audio(base_path);
 
     FrameLoaderData *loader = g_new0(FrameLoaderData, 1);
     loader->context = sc;
