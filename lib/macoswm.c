@@ -99,6 +99,7 @@ typedef struct {
     Atom net_wm_window_type_dnd;
     Atom net_wm_strut_partial;
     Atom macos_de_volume_event;
+    Atom macos_de_brightness_event;
 } WmAtoms;
 
 struct MacosWm {
@@ -153,6 +154,7 @@ struct MacosWm {
     struct timespec settings_mtime;
     long long heartbeat_at_ms;
     unsigned long volume_event_serial;
+    unsigned long brightness_event_serial;
 };
 
 static MacosWm *error_handler_wm;
@@ -324,6 +326,8 @@ static void initialize_atoms(MacosWm *wm) {
     a->net_wm_strut_partial = intern_atom(display, "_NET_WM_STRUT_PARTIAL");
     a->macos_de_volume_event =
         intern_atom(display, "_MACOS_DE_VOLUME_EVENT");
+    a->macos_de_brightness_event =
+        intern_atom(display, "_MACOS_DE_BRIGHTNESS_EVENT");
 }
 
 static int program_in_path(const char *program) {
@@ -485,7 +489,7 @@ static KeySym brightness_keysym_for_keycode(Display *display,
     return result;
 }
 
-static void run_brightness_command(KeySym key) {
+static void run_brightness_command(MacosWm *wm, KeySym key) {
     DIR *directory = opendir("/sys/class/backlight");
     if (directory == NULL) {
         fprintf(stderr, "macos-wm: could not access display backlight: %s\n",
@@ -549,6 +553,12 @@ static void run_brightness_command(KeySym key) {
             int write_error = written < 0 ? errno : EIO;
             fprintf(stderr, "macos-wm: could not update display brightness at %s: %s\n",
                     brightness_path, strerror(write_error));
+        } else {
+            wm->brightness_event_serial++;
+            XChangeProperty(wm->display, wm->root,
+                            wm->atoms.macos_de_brightness_event,
+                            XA_CARDINAL, 32, PropModeReplace,
+                            (unsigned char *)&wm->brightness_event_serial, 1);
         }
         close(fd);
         handled = 1;
@@ -1372,7 +1382,7 @@ static void handle_key_press(MacosWm *wm, XKeyEvent *event) {
     KeySym brightness_key = is_brightness_keysym(key)
         ? key : brightness_keysym_for_keycode(wm->display, event->keycode);
     if (is_brightness_keysym(brightness_key)) {
-        run_brightness_command(brightness_key);
+        run_brightness_command(wm, brightness_key);
     } else if (is_volume_keysym(volume_key)) {
         run_volume_command(wm, volume_key);
     } else if ((event->state & (ControlMask | Mod1Mask)) ==
@@ -2026,6 +2036,16 @@ MacosWm *macos_wm_new(const char *display_name) {
         wm->volume_event_serial = ((unsigned long *)volume_event)[0];
     }
     if (volume_event) XFree(volume_event);
+    unsigned char *brightness_event = NULL;
+    if (XGetWindowProperty(wm->display, wm->root,
+                           wm->atoms.macos_de_brightness_event, 0, 1, False,
+                           XA_CARDINAL, &actual_type, &actual_format, &count,
+                           &bytes_after, &brightness_event) == Success &&
+        brightness_event && actual_type == XA_CARDINAL &&
+        actual_format == 32 && count) {
+        wm->brightness_event_serial = ((unsigned long *)brightness_event)[0];
+    }
+    if (brightness_event) XFree(brightness_event);
     setup_colors(wm);
     char *font_path = font_asset_path();
     if (font_path) {

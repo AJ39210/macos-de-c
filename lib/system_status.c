@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 typedef struct {
+    GtkWidget *power_button;
     GtkWidget *wifi_button;
     GtkWidget *battery_button;
     GtkWidget *network_detail;
@@ -23,18 +24,24 @@ typedef struct {
     GtkWidget *mute_button;
     GtkWidget *volume_osd;
     GtkWidget *volume_osd_icon;
+    GtkWidget *brightness_osd;
+    GtkWidget *brightness_osd_icon;
     char *asset_directory;
     char *volume_backend;
     char *brightness_backend;
     char *brightness_device;
     gulong volume_event;
+    gulong brightness_event;
     guint osd_hide_source;
+    guint brightness_osd_hide_source;
     gboolean setting_scale;
     gboolean volume_muted;
     gboolean dark_theme;
 } SystemStatus;
 
 static SystemStatus *status;
+static void launch_control_command(const char *const *argv);
+static void show_brightness_osd(void);
 
 static void append_rounded_rectangle(cairo_t *context, double width,
                                      double height, double radius) {
@@ -308,6 +315,27 @@ static int read_brightness_percent(void) {
     return -1;
 }
 
+int system_status_get_brightness_percent(void) {
+    return status != NULL ? read_brightness_percent() : -1;
+}
+
+gboolean system_status_set_brightness_percent(int percent) {
+    if (status == NULL)
+        return FALSE;
+    if (status->brightness_device != NULL)
+        return write_backlight_percent(CLAMP(percent, 0, 100));
+    if (backend_is(status->brightness_backend, "xbacklight")) {
+        char value[16];
+        g_snprintf(value, sizeof(value), "%d", CLAMP(percent, 0, 100));
+        const char *argv[] = {
+            status->brightness_backend, "-set", value, NULL
+        };
+        launch_control_command(argv);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static void on_control_finished(GObject *source, GAsyncResult *result,
                                 gpointer user_data) {
     (void)user_data;
@@ -351,15 +379,8 @@ static void set_volume(double volume) {
 }
 
 static void set_brightness(double brightness) {
-    if (status->brightness_device) {
-        write_backlight_percent(brightness);
-    } else if (backend_is(status->brightness_backend, "xbacklight")) {
-        char value[16];
-        g_snprintf(value, sizeof(value), "%.0f",
-                   CLAMP(brightness, 0, 100));
-        const char *argv[] = { status->brightness_backend, "-set", value, NULL };
-        launch_control_command(argv);
-    }
+    system_status_set_brightness_percent(
+        (int)(CLAMP(brightness, 0, 100) + 0.5));
 }
 
 static void on_volume_changed(GtkRange *range, gpointer user_data) {
@@ -454,6 +475,9 @@ static void show_control_panel(GtkWidget *anchor) {
                       natural.height);
     gtk_widget_show_all(status->control_panel);
     gtk_window_present(GTK_WINDOW(status->control_panel));
+    GdkWindow *panel_window = gtk_widget_get_window(status->control_panel);
+    if (panel_window != NULL)
+        gdk_window_raise(panel_window);
 }
 
 static void on_status_button_clicked(GtkButton *button, gpointer user_data) {
@@ -463,6 +487,11 @@ static void on_status_button_clicked(GtkButton *button, gpointer user_data) {
     } else {
         show_control_panel(GTK_WIDGET(button));
     }
+}
+
+void system_status_toggle_control_panel(void) {
+    if (status != NULL && status->power_button != NULL)
+        on_status_button_clicked(GTK_BUTTON(status->power_button), NULL);
 }
 
 static gboolean on_control_panel_key_press(GtkWidget *widget,
@@ -479,6 +508,12 @@ static gboolean on_control_panel_key_press(GtkWidget *widget,
 static gboolean hide_volume_osd(gpointer user_data) {
     gtk_widget_hide(GTK_WIDGET(user_data));
     status->osd_hide_source = 0;
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean hide_brightness_osd(gpointer user_data) {
+    gtk_widget_hide(GTK_WIDGET(user_data));
+    status->brightness_osd_hide_source = 0;
     return G_SOURCE_REMOVE;
 }
 
@@ -743,7 +778,49 @@ static gboolean poll_volume_event(gpointer user_data) {
         }
     }
     if (value) XFree(value);
+
+    Atom brightness_event_atom = XInternAtom(
+        display, "_MACOS_DE_BRIGHTNESS_EVENT", False);
+    unsigned char *brightness_value = NULL;
+    if (XGetWindowProperty(display, DefaultRootWindow(display),
+                           brightness_event_atom, 0, 1, False, XA_CARDINAL,
+                           &actual_type, &actual_format, &count, &bytes_after,
+                           &brightness_value) == Success &&
+        brightness_value && actual_type == XA_CARDINAL &&
+        actual_format == 32 && count) {
+        gulong current_event =
+            (gulong)((unsigned long *)brightness_value)[0];
+        if (current_event != status->brightness_event) {
+            status->brightness_event = current_event;
+            show_brightness_osd();
+        }
+    }
+    if (brightness_value) XFree(brightness_value);
     return G_SOURCE_CONTINUE;
+}
+
+static void show_brightness_osd(void) {
+    int brightness = read_brightness_percent();
+    if (brightness < 0)
+        return;
+
+    status->setting_scale = TRUE;
+    gtk_range_set_value(GTK_RANGE(status->brightness_scale), brightness);
+    status->setting_scale = FALSE;
+
+    int icon_brightness = ((brightness + 2) / 5) * 5;
+    char icon_name[32];
+    g_snprintf(icon_name, sizeof(icon_name), "brightness_%03d.png",
+               CLAMP(icon_brightness, 0, 100));
+    set_asset_icon(status->brightness_osd_icon, "brightness", icon_name, 200);
+    gtk_window_set_position(GTK_WINDOW(status->brightness_osd),
+                            GTK_WIN_POS_CENTER);
+    gtk_widget_show_all(status->brightness_osd);
+    gtk_window_present(GTK_WINDOW(status->brightness_osd));
+    if (status->brightness_osd_hide_source)
+        g_source_remove(status->brightness_osd_hide_source);
+    status->brightness_osd_hide_source =
+        g_timeout_add(800, hide_brightness_osd, status->brightness_osd);
 }
 
 static GtkWidget *create_scale_row(const char *icon, const char *label,
@@ -770,6 +847,7 @@ GtkWidget *system_status_create(GtkWidget *power_button,
                                 const char *asset_directory,
                                 gboolean dark_theme) {
     status = g_new0(SystemStatus, 1);
+    status->power_button = power_button;
     status->asset_directory = g_strdup(asset_directory);
     status->dark_theme = dark_theme;
     Display *display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
@@ -789,6 +867,19 @@ GtkWidget *system_status_create(GtkWidget *power_button,
         status->volume_event = (gulong)((unsigned long *)volume_event)[0];
     }
     if (volume_event) XFree(volume_event);
+    Atom brightness_event_atom = XInternAtom(
+        display, "_MACOS_DE_BRIGHTNESS_EVENT", False);
+    unsigned char *brightness_event = NULL;
+    if (XGetWindowProperty(display, DefaultRootWindow(display),
+                           brightness_event_atom, 0, 1, False, XA_CARDINAL,
+                           &actual_type, &actual_format, &count, &bytes_after,
+                           &brightness_event) == Success &&
+        brightness_event && actual_type == XA_CARDINAL &&
+        actual_format == 32 && count) {
+        status->brightness_event =
+            (gulong)((unsigned long *)brightness_event)[0];
+    }
+    if (brightness_event) XFree(brightness_event);
     static const char *const volume_programs[] = {
         "wpctl", "pactl", "amixer", NULL
     };
@@ -898,6 +989,21 @@ GtkWidget *system_status_create(GtkWidget *power_button,
     status->volume_osd_icon = gtk_image_new();
     gtk_widget_set_size_request(status->volume_osd_icon, 200, 200);
     gtk_container_add(GTK_CONTAINER(status->volume_osd), status->volume_osd_icon);
+
+    status->brightness_osd = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    prepare_transparent_window(status->brightness_osd);
+    gtk_window_set_decorated(GTK_WINDOW(status->brightness_osd), FALSE);
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(status->brightness_osd), TRUE);
+    gtk_window_set_skip_pager_hint(GTK_WINDOW(status->brightness_osd), TRUE);
+    gtk_window_set_keep_above(GTK_WINDOW(status->brightness_osd), TRUE);
+    gtk_window_set_type_hint(GTK_WINDOW(status->brightness_osd),
+                             GDK_WINDOW_TYPE_HINT_NOTIFICATION);
+    gtk_style_context_add_class(
+        gtk_widget_get_style_context(status->brightness_osd), "brightness-osd");
+    status->brightness_osd_icon = gtk_image_new();
+    gtk_widget_set_size_request(status->brightness_osd_icon, 200, 200);
+    gtk_container_add(GTK_CONTAINER(status->brightness_osd),
+                      status->brightness_osd_icon);
 
     g_signal_connect(status->volume_scale, "value-changed",
                      G_CALLBACK(on_volume_changed), NULL);

@@ -12,6 +12,7 @@ rm -f -- /usr/share/applications/macos-de-settings.desktop \
     /usr/share/applications/macos-de-screenshot-manager.desktop \
     /usr/share/applications/macos-de-notification-manager.desktop
 rm -f -- /etc/udev/rules.d/99-macos-de-backlight.rules
+rm -f -- /etc/pam.d/macos-de
 if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules
     udevadm trigger --subsystem-match=backlight

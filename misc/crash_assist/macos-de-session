@@ -95,6 +95,9 @@ while :; do
     if [ -z "$failure_reason" ] && ! kill -0 "$desktop_pid" 2>/dev/null; then
         wait "$desktop_pid"
         status=$?
+        if [ "$status" -eq 0 ]; then
+            exit 0
+        fi
         failure_reason="The desktop process exited unexpectedly (status $status)."
     elif [ -z "$failure_reason" ] && ! kill -0 "$wm_pid" 2>/dev/null; then
         wait "$wm_pid"

@@ -27,6 +27,10 @@ utilities.
 - Built-in System Stats widget and support for installable `.widg` packages.
 - Volume and display-brightness controls in the panel, with media and
   brightness keyboard keys where supported by the keyboard.
+- Automatic lock screen with PAM-backed Linux account-password authentication,
+  an optional lock-screen wallpaper, and screen blanking after three minutes.
+- The desktop locks after the startup animation; use the current Linux account
+  password to enter the session.
 - Finder, Easy-File, Easy-Term, Notification Manager, and Screenshot Manager.
 - Session restart command: `macos-de-restart` restarts the desktop session
   without logging out or restarting the computer.
@@ -44,12 +48,22 @@ On Ubuntu or Debian, install the build dependencies with:
 sudo apt update
 sudo apt install build-essential make pkg-config \
   libgtk-3-dev libx11-dev libxext-dev libxft-dev libxcursor-dev \
-  libgdk-pixbuf-2.0-dev libfontconfig1-dev libpango1.0-dev
+  libgdk-pixbuf-2.0-dev libfontconfig1-dev libpango1.0-dev \
+  libpam0g-dev libxss-dev
 ```
 
 The desktop and window manager are built from source. Some optional controls
 use system utilities when available, such as `wpctl`, `pactl`, `amixer`, or
 `xbacklight`.
+
+The lock screen uses X11's ScreenSaver extension to detect inactivity and
+PAM to verify the current Linux account password. It does not suspend the
+computer: after three minutes on the lock screen it blanks the display, and
+input wakes it to the password prompt. The selected wallpaper remains visible
+behind a tall, rounded, blurred glass panel on the left, with the clock and
+password prompt together. Locking dims the display; mouse or keyboard activity
+restores its pre-lock brightness while the session remains locked. The top-right
+session menu remains available on the lock screen.
 
 ## Build
 
@@ -86,7 +100,8 @@ for the display manager, and registers its applications. If the system has a
 `video` group, it also installs a udev rule for backlight access and adds the
 invoking login user to that group. **Log out and back in** after installation
 for group membership and brightness permissions to take effect. The install
-script does not switch the current desktop session automatically.
+script also installs a PAM service definition for password-based lock-screen
+unlocking. It does not switch the current desktop session automatically.
 
 To remove the system-wide installation:
 
@@ -126,6 +141,13 @@ The dedicated media and brightness keys depend on the key symbols exposed by
 the keyboard and X11. Brightness control also requires a supported backlight
 device and write permission; the installer configures the common `video`-group
 setup when available.
+
+The lock screen starts automatically after three minutes of inactivity.
+Change this in **DE Settings → Preferences → Lock screen** to 15 or 30 minutes,
+1 or 2 hours, or **Never**. The wallpaper used by the lock screen can be
+selected separately under **DE Settings → Wallpaper And Widgets → Lock screen**;
+clearing its selection makes it follow the desktop wallpaper. Use **DE Settings
+→ Dev → Lock screen now** to open it immediately for testing.
 
 ## Widgets
 

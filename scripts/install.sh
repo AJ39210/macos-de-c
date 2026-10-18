@@ -13,6 +13,7 @@ install_dir=/usr/share/macos-de
 session_dir=/usr/share/xsessions
 applications_dir=/usr/share/applications
 udev_rule=/etc/udev/rules.d/99-macos-de-backlight.rules
+pam_config=/etc/pam.d/macos-de
 
 for required in bin assets css apps applications widgets; do
     if [ ! -d "$build_dir/$required" ]; then
@@ -32,6 +33,7 @@ cp -a "$build_dir/bin" "$build_dir/assets" "$build_dir/css" \
     "$build_dir/apps" "$build_dir/widgets" "$install_dir/"
 install -m 644 "$desktop_entry" "$session_dir/macos-de.desktop"
 install -m 644 "$build_dir"/applications/*.desktop "$applications_dir/"
+install -m 644 "$project_dir/scripts/pam-macos-de" "$pam_config"
 
 if getent group video >/dev/null 2>&1; then
     install -D -m 644 "$project_dir/scripts/99-macos-de-backlight.rules" \

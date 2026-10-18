@@ -15,10 +15,13 @@ typedef struct {
     GtkWidget *theme_switch;
     GtkWidget *wallpaper_image;
     GtkWidget *wallpaper_status;
+    GtkWidget *lock_wallpaper_image;
+    GtkWidget *lock_wallpaper_status;
     GtkWidget *widget_status;
     GtkWidget *stats_switch;
     GtkWidget *button_shape;
     GtkWidget *window_corners;
+    GtkWidget *lock_timeout;
     GKeyFile *settings;
     gchar *settings_path;
     gchar *executable_path;
@@ -247,6 +250,42 @@ on_window_manager_preference_changed(GtkComboBox *combo, gpointer user_data)
     g_free(previous);
 }
 
+static void
+on_lock_timeout_changed(GtkComboBox *combo, gpointer user_data)
+{
+    SettingsApp *app = user_data;
+    const gchar *selected = gtk_combo_box_get_active_id(combo);
+    gchar *end = NULL;
+    gint requested = selected != NULL ? (gint)g_ascii_strtoll(selected, &end, 10) : -1;
+    gboolean had_value = g_key_file_has_key(
+        app->settings, "LockScreen", "idle_minutes", NULL);
+    gint previous = g_key_file_get_integer(
+        app->settings, "LockScreen", "idle_minutes", NULL);
+    GError *error = NULL;
+    if (selected == NULL || end == selected || *end != '\0')
+        return;
+    if (app->updating_switches)
+        return;
+    g_key_file_set_integer(app->settings, "LockScreen", "idle_minutes",
+                           requested);
+    if (save_settings(app, &error))
+        return;
+    if (had_value)
+        g_key_file_set_integer(app->settings, "LockScreen", "idle_minutes",
+                               previous);
+    else
+        g_key_file_remove_key(app->settings, "LockScreen", "idle_minutes", NULL);
+    show_error(app, "Lock screen preference was not saved",
+               error ? error->message : "Settings could not be written.");
+    g_clear_error(&error);
+    gchar previous_text[16];
+    g_snprintf(previous_text, sizeof(previous_text), "%d",
+               had_value ? previous : 3);
+    app->updating_switches = TRUE;
+    gtk_combo_box_set_active_id(combo, previous_text);
+    app->updating_switches = FALSE;
+}
+
 static gchar *
 find_app_executable(SettingsApp *app, const gchar *app_dir,
                     const gchar *binary)
@@ -396,6 +435,36 @@ test_notification(GtkButton *button, gpointer user_data)
 }
 
 static void
+lock_desktop_now(GtkButton *button, gpointer user_data)
+{
+    SettingsApp *app = user_data;
+    GError *error = NULL;
+    (void)button;
+    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+    if (bus == NULL) {
+        show_error(app, "Could not connect to the desktop",
+                   error ? error->message :
+                   "The session D-Bus connection is unavailable.");
+        g_clear_error(&error);
+        return;
+    }
+
+    GVariant *reply = g_dbus_connection_call_sync(
+        bus, "org.macosde.Desktop", "/org/macosde/Desktop",
+        "org.macosde.Desktop", "Lock", NULL, G_VARIANT_TYPE("()"),
+        G_DBUS_CALL_FLAGS_NONE, 3000, NULL, &error);
+    if (reply == NULL) {
+        show_error(app, "Could not lock the desktop",
+                   error ? error->message :
+                   "The running desktop did not accept the lock request.");
+        g_clear_error(&error);
+    } else {
+        g_variant_unref(reply);
+    }
+    g_object_unref(bus);
+}
+
+static void
 on_screenshot_test_clicked(GtkButton *button, gpointer user_data)
 {
     SettingsApp *app = user_data;
@@ -513,12 +582,6 @@ show_window_manager_test(GtkButton *button, gpointer user_data)
     gtk_widget_show_all(window);
 }
 
-static void
-set_wallpaper_status(SettingsApp *app, const gchar *text)
-{
-    gtk_label_set_text(GTK_LABEL(app->wallpaper_status), text);
-}
-
 static gchar *
 find_default_wallpaper(SettingsApp *app)
 {
@@ -543,24 +606,51 @@ find_default_wallpaper(SettingsApp *app)
 }
 
 static void
-set_wallpaper_preview(SettingsApp *app, const gchar *path,
-                      const gchar *status)
+wallpaper_controls(SettingsApp *app, const gchar *key,
+                   GtkWidget **image, GtkWidget **status)
 {
+    if (g_str_equal(key, "lock_wallpaper")) {
+        *image = app->lock_wallpaper_image;
+        *status = app->lock_wallpaper_status;
+    } else {
+        *image = app->wallpaper_image;
+        *status = app->wallpaper_status;
+    }
+}
+
+static void
+set_wallpaper_preview(SettingsApp *app, const gchar *key,
+                      const gchar *path, const gchar *status_text)
+{
+    GtkWidget *image;
+    GtkWidget *status;
+    wallpaper_controls(app, key, &image, &status);
     GError *error = NULL;
     GdkPixbuf *preview = gdk_pixbuf_new_from_file_at_scale(
         path, 720, 360, TRUE, &error);
     if (preview == NULL) {
         gchar *message = g_strdup_printf(
-            "Could not load wallpaper preview: %s",
+            "Could not load preview: %s",
             error ? error->message : "unknown image error");
-        set_wallpaper_status(app, message);
+        gtk_label_set_text(GTK_LABEL(status), message);
         g_free(message);
         g_clear_error(&error);
         return;
     }
-    gtk_image_set_from_pixbuf(GTK_IMAGE(app->wallpaper_image), preview);
-    set_wallpaper_status(app, status);
+    gtk_image_set_from_pixbuf(GTK_IMAGE(image), preview);
+    gtk_label_set_text(GTK_LABEL(status), status_text);
     g_object_unref(preview);
+}
+
+static gchar *
+current_desktop_wallpaper(SettingsApp *app)
+{
+    gchar *wallpaper = g_key_file_get_string(
+        app->settings, "Appearance", "wallpaper", NULL);
+    if (wallpaper != NULL && g_file_test(wallpaper, G_FILE_TEST_IS_REGULAR))
+        return wallpaper;
+    g_free(wallpaper);
+    return find_default_wallpaper(app);
 }
 
 static gchar *
@@ -1010,6 +1100,13 @@ on_wallpaper_response(GtkNativeDialog *native_dialog, gint response, gpointer us
 {
     SettingsApp *app = user_data;
     GtkFileChooser *chooser = GTK_FILE_CHOOSER(native_dialog);
+    const gchar *key = g_object_get_data(
+        G_OBJECT(native_dialog), "wallpaper-key");
+    if (key == NULL)
+        key = "wallpaper";
+    GtkWidget *image;
+    GtkWidget *status;
+    wallpaper_controls(app, key, &image, &status);
 
     if (response == GTK_RESPONSE_ACCEPT) {
         gchar *filename = gtk_file_chooser_get_filename(chooser);
@@ -1017,22 +1114,27 @@ on_wallpaper_response(GtkNativeDialog *native_dialog, gint response, gpointer us
         GdkPixbuf *preview = gdk_pixbuf_new_from_file_at_scale(filename, 720, 360, TRUE, &error);
 
         if (preview == NULL) {
-            show_error(app, "Could not use this wallpaper", error->message);
+            show_error(app, "Could not use this wallpaper",
+                       error ? error->message : "The image could not be loaded.");
             g_clear_error(&error);
         } else {
             gchar *absolute_path = g_canonicalize_filename(filename, NULL);
-            gchar *previous_path = g_key_file_get_string(app->settings, "Appearance", "wallpaper", NULL);
-            g_key_file_set_string(app->settings, "Appearance", "wallpaper", absolute_path);
+            gchar *previous_path = g_key_file_get_string(
+                app->settings, "Appearance", key, NULL);
+            g_key_file_set_string(app->settings, "Appearance", key,
+                                  absolute_path);
             if (save_settings(app, &error)) {
-                gtk_image_set_from_pixbuf(
-                    GTK_IMAGE(app->wallpaper_image), preview);
-                set_wallpaper_status(app, absolute_path);
+                gtk_image_set_from_pixbuf(GTK_IMAGE(image), preview);
+                gtk_label_set_text(GTK_LABEL(status), absolute_path);
             } else {
                 if (previous_path != NULL)
-                    g_key_file_set_string(app->settings, "Appearance", "wallpaper", previous_path);
+                    g_key_file_set_string(app->settings, "Appearance", key,
+                                          previous_path);
                 else
-                    g_key_file_remove_key(app->settings, "Appearance", "wallpaper", NULL);
-                show_error(app, "Wallpaper was not saved", error->message);
+                    g_key_file_remove_key(app->settings, "Appearance", key, NULL);
+                show_error(app, "Wallpaper was not saved",
+                           error ? error->message :
+                           "Settings could not be written.");
                 g_clear_error(&error);
             }
             g_free(absolute_path);
@@ -1049,6 +1151,7 @@ static void
 choose_wallpaper(GtkButton *button, gpointer user_data)
 {
     SettingsApp *app = user_data;
+    const gchar *key = g_object_get_data(G_OBJECT(button), "wallpaper-key");
     GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
         "Choose a wallpaper", GTK_WINDOW(app->window), GTK_FILE_CHOOSER_ACTION_OPEN,
         "Choose", "Cancel");
@@ -1058,6 +1161,8 @@ choose_wallpaper(GtkButton *button, gpointer user_data)
     gtk_file_filter_set_name(filter, "Image files");
     gtk_file_filter_add_mime_type(filter, "image/*");
     gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
+    g_object_set_data_full(G_OBJECT(chooser), "wallpaper-key",
+                           g_strdup(key != NULL ? key : "wallpaper"), g_free);
     g_signal_connect(chooser, "response", G_CALLBACK(on_wallpaper_response), app);
     gtk_native_dialog_show(GTK_NATIVE_DIALOG(chooser));
 }
@@ -1066,30 +1171,39 @@ static void
 clear_wallpaper(GtkButton *button, gpointer user_data)
 {
     SettingsApp *app = user_data;
+    const gchar *key = g_object_get_data(G_OBJECT(button), "wallpaper-key");
+    if (key == NULL)
+        key = "wallpaper";
     GError *error = NULL;
-    gchar *default_wallpaper = find_default_wallpaper(app);
-    gchar *previous_path = g_key_file_get_string(app->settings, "Appearance", "wallpaper", NULL);
-    (void) button;
+    gchar *default_wallpaper = g_str_equal(key, "lock_wallpaper")
+        ? current_desktop_wallpaper(app) : find_default_wallpaper(app);
+    gchar *previous_path = g_key_file_get_string(
+        app->settings, "Appearance", key, NULL);
 
     if (default_wallpaper == NULL) {
         show_error(app, "Default wallpaper unavailable",
-                   "The bundled assets/wallpaper/mac.png image could not be found.");
+                   "The fallback wallpaper image could not be found.");
         g_free(previous_path);
         return;
     }
-    g_key_file_remove_key(app->settings, "Appearance", "wallpaper", NULL);
+    g_key_file_remove_key(app->settings, "Appearance", key, NULL);
     if (!save_settings(app, &error)) {
         if (previous_path != NULL)
-            g_key_file_set_string(app->settings, "Appearance", "wallpaper", previous_path);
-        show_error(app, "Wallpaper preference was not cleared", error->message);
+            g_key_file_set_string(app->settings, "Appearance", key,
+                                  previous_path);
+        show_error(app, "Wallpaper preference was not cleared",
+                   error ? error->message :
+                   "Settings could not be written.");
         g_clear_error(&error);
         g_free(previous_path);
         g_free(default_wallpaper);
         return;
     }
     g_free(previous_path);
-    set_wallpaper_preview(app, default_wallpaper,
-                          "Using the default wallpaper (mac.png).");
+    set_wallpaper_preview(app, key, default_wallpaper,
+        g_str_equal(key, "lock_wallpaper")
+            ? "Using the desktop wallpaper for the lock screen."
+            : "Using the default wallpaper (mac.png).");
     g_free(default_wallpaper);
 }
 
@@ -1301,12 +1415,99 @@ load_saved_preferences(SettingsApp *app)
         }
     }
 
-    gchar *wallpaper = g_key_file_get_string(app->settings, "Appearance", "wallpaper", NULL);
-    if (wallpaper != NULL && wallpaper[0] != '\0' && !g_path_is_absolute(wallpaper)) {
-        g_warning("Ignoring non-absolute wallpaper path in settings: %s", wallpaper);
-        g_key_file_remove_key(app->settings, "Appearance", "wallpaper", NULL);
+    const gchar *wallpaper_keys[] = { "wallpaper", "lock_wallpaper" };
+    for (guint i = 0; i < G_N_ELEMENTS(wallpaper_keys); i++) {
+        gchar *wallpaper = g_key_file_get_string(
+            app->settings, "Appearance", wallpaper_keys[i], NULL);
+        if (wallpaper != NULL && wallpaper[0] != '\0' &&
+            !g_path_is_absolute(wallpaper)) {
+            g_warning("Ignoring non-absolute %s path in settings: %s",
+                      wallpaper_keys[i], wallpaper);
+            g_key_file_remove_key(
+                app->settings, "Appearance", wallpaper_keys[i], NULL);
+        }
+        g_free(wallpaper);
     }
-    g_free(wallpaper);
+}
+
+static GtkWidget *
+create_wallpaper_card(SettingsApp *app, const gchar *key,
+                      const gchar *title, const gchar *description)
+{
+    GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *expander = gtk_expander_new(NULL);
+    GtkWidget *heading = gtk_label_new(title);
+    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *detail = gtk_label_new(description);
+    gtk_style_context_add_class(gtk_widget_get_style_context(card),
+                                "settings-card");
+    gtk_style_context_add_class(gtk_widget_get_style_context(heading),
+                                "card-title");
+    gtk_widget_set_halign(heading, GTK_ALIGN_START);
+    gtk_label_set_xalign(GTK_LABEL(heading), 0.0f);
+    gtk_expander_set_label_widget(GTK_EXPANDER(expander), heading);
+    gtk_expander_set_expanded(GTK_EXPANDER(expander), FALSE);
+    gtk_label_set_line_wrap(GTK_LABEL(detail), TRUE);
+    gtk_widget_set_halign(detail, GTK_ALIGN_START);
+    gtk_label_set_xalign(GTK_LABEL(detail), 0.0f);
+    gtk_style_context_add_class(gtk_widget_get_style_context(detail), "muted");
+    gtk_box_pack_start(GTK_BOX(content), detail, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(expander), content);
+    gtk_box_pack_start(GTK_BOX(card), expander, FALSE, FALSE, 0);
+    GtkWidget **image_slot = g_str_equal(key, "lock_wallpaper")
+        ? &app->lock_wallpaper_image : &app->wallpaper_image;
+    GtkWidget **status_slot = g_str_equal(key, "lock_wallpaper")
+        ? &app->lock_wallpaper_status : &app->wallpaper_status;
+    *image_slot = gtk_image_new();
+    gtk_widget_set_size_request(*image_slot, -1, 200);
+    gtk_widget_set_halign(*image_slot, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(content), *image_slot, FALSE, FALSE, 2);
+    *status_slot = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(*status_slot), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(*status_slot), 0.0f);
+    gtk_style_context_add_class(
+        gtk_widget_get_style_context(*status_slot), "muted");
+    gtk_box_pack_start(GTK_BOX(content), *status_slot, FALSE, FALSE, 0);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *button = gtk_button_new_with_label("Choose Image…");
+    g_object_set_data(G_OBJECT(button), "wallpaper-key", (gpointer)key);
+    g_signal_connect(button, "clicked", G_CALLBACK(choose_wallpaper), app);
+    gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
+    button = gtk_button_new_with_label("Clear Selection");
+    g_object_set_data(G_OBJECT(button), "wallpaper-key", (gpointer)key);
+    g_signal_connect(button, "clicked", G_CALLBACK(clear_wallpaper), app);
+    gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), actions, FALSE, FALSE, 0);
+    return card;
+}
+
+static void
+load_wallpaper_card_preview(SettingsApp *app, const gchar *key)
+{
+    gchar *selected = g_key_file_get_string(
+        app->settings, "Appearance", key, NULL);
+    if (selected != NULL && *selected != '\0') {
+        set_wallpaper_preview(app, key, selected, selected);
+        g_free(selected);
+        return;
+    }
+    g_free(selected);
+
+    gchar *fallback = g_str_equal(key, "lock_wallpaper")
+        ? current_desktop_wallpaper(app) : find_default_wallpaper(app);
+    if (fallback == NULL) {
+        GtkWidget *image;
+        GtkWidget *status;
+        wallpaper_controls(app, key, &image, &status);
+        gtk_label_set_text(GTK_LABEL(status), "Wallpaper image is unavailable.");
+        return;
+    }
+    set_wallpaper_preview(app, key, fallback,
+        g_str_equal(key, "lock_wallpaper")
+            ? "Using the desktop wallpaper for the lock screen."
+            : "Using the default wallpaper (mac.png).");
+    g_free(fallback);
 }
 
 static void
@@ -1398,28 +1599,47 @@ activate(GtkApplication *application, gpointer user_data)
                      G_CALLBACK(on_window_manager_preference_changed), app);
     gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
 
+    card = make_card("Lock screen",
+                     "Lock macOS-DE after inactivity. The display blanks after three more minutes; use your Linux account password to unlock.");
+    combo = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), "3", "3 minutes");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), "15", "15 minutes");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), "30", "30 minutes");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), "60", "1 hour");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), "120", "2 hours");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), "0", "Never");
+    gint lock_timeout = g_key_file_get_integer(
+        app->settings, "LockScreen", "idle_minutes", NULL);
+    if (lock_timeout != 0 && lock_timeout != 3 && lock_timeout != 15 &&
+        lock_timeout != 30 && lock_timeout != 60 && lock_timeout != 120)
+        lock_timeout = 3;
+    gchar lock_timeout_text[16];
+    g_snprintf(lock_timeout_text, sizeof(lock_timeout_text), "%d",
+               lock_timeout == 0 && !g_key_file_has_key(
+                   app->settings, "LockScreen", "idle_minutes", NULL)
+                   ? 3 : lock_timeout);
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), lock_timeout_text);
+    app->lock_timeout = combo;
+    add_setting_row(card, "Lock after inactivity",
+                    "Require your Linux account password to return to the desktop.",
+                    combo);
+    g_signal_connect(combo, "changed",
+                     G_CALLBACK(on_lock_timeout_changed), app);
+    gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
+
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), page, gtk_label_new("Preferences"));
 
     page = make_page(14);
-    card = make_card("Wallpaper", "Choose an image for your desktop wallpaper. The selected file path is saved for the desktop to use.");
-    app->wallpaper_image = gtk_image_new();
-    gtk_widget_set_size_request(app->wallpaper_image, -1, 220);
-    gtk_widget_set_halign(app->wallpaper_image, GTK_ALIGN_CENTER);
-    gtk_box_pack_start(GTK_BOX(card), app->wallpaper_image, FALSE, FALSE, 2);
-    app->wallpaper_status = gtk_label_new("No wallpaper image selected.");
-    gtk_label_set_line_wrap(GTK_LABEL(app->wallpaper_status), TRUE);
-    gtk_label_set_xalign(GTK_LABEL(app->wallpaper_status), 0.0f);
-    gtk_style_context_add_class(gtk_widget_get_style_context(app->wallpaper_status), "muted");
-    gtk_box_pack_start(GTK_BOX(card), app->wallpaper_status, FALSE, FALSE, 0);
-    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    button = gtk_button_new_with_label("Choose Image…");
-    g_signal_connect(button, "clicked", G_CALLBACK(choose_wallpaper), app);
-    gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
-    button = gtk_button_new_with_label("Clear Selection");
-    g_signal_connect(button, "clicked", G_CALLBACK(clear_wallpaper), app);
-    gtk_box_pack_start(GTK_BOX(actions), button, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(card), actions, FALSE, FALSE, 0);
+    card = create_wallpaper_card(
+        app, "wallpaper", "Desktop wallpaper",
+        "Choose the image shown behind your desktop and windows.");
     gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
+    card = create_wallpaper_card(
+        app, "lock_wallpaper", "Lock screen",
+        "Choose a separate image for the blurred lock-screen background. Clear Selection follows the desktop wallpaper.");
+    gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
+    load_wallpaper_card_preview(app, "wallpaper");
+    load_wallpaper_card_preview(app, "lock_wallpaper");
     card = make_card("Widgets", "Enable built-in System Stats or install native executable widgets from .widg ZIP packages. Widget programs run as your user and are not sandboxed.");
     toggle = gtk_switch_new();
     app->stats_switch = toggle;
@@ -1439,32 +1659,6 @@ activate(GtkApplication *application, gpointer user_data)
     g_signal_connect(button, "clicked", G_CALLBACK(choose_widget_bundle), app);
     gtk_box_pack_start(GTK_BOX(card), button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
-    gchar *wallpaper = g_key_file_get_string(app->settings, "Appearance", "wallpaper", NULL);
-    if (wallpaper != NULL) {
-        GError *wallpaper_error = NULL;
-        GdkPixbuf *preview = gdk_pixbuf_new_from_file_at_scale(wallpaper, 720, 360, TRUE,
-                                                               &wallpaper_error);
-        if (preview != NULL) {
-            gtk_image_set_from_pixbuf(GTK_IMAGE(app->wallpaper_image), preview);
-            set_wallpaper_status(app, wallpaper);
-            g_object_unref(preview);
-        } else {
-            gchar *status = g_strdup_printf("Saved image is unavailable: %s", wallpaper);
-            set_wallpaper_status(app, status);
-            g_free(status);
-            g_clear_error(&wallpaper_error);
-        }
-        g_free(wallpaper);
-    } else {
-        gchar *default_wallpaper = find_default_wallpaper(app);
-        if (default_wallpaper != NULL) {
-            set_wallpaper_preview(app, default_wallpaper,
-                                  "Using the default wallpaper (mac.png).");
-            g_free(default_wallpaper);
-        } else {
-            set_wallpaper_status(app, "Default wallpaper mac.png is unavailable.");
-        }
-    }
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), page, gtk_label_new("Wallpaper And Widgets"));
 
     page = make_page(14);
@@ -1533,6 +1727,14 @@ activate(GtkApplication *application, gpointer user_data)
     button = gtk_button_new_with_label("Open spinning-cube test window");
     gtk_widget_set_halign(button, GTK_ALIGN_START);
     g_signal_connect(button, "clicked", G_CALLBACK(show_window_manager_test), app);
+    gtk_box_pack_start(GTK_BOX(card), button, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
+
+    card = make_card("Lock screen",
+                     "Immediately open the lock screen to test its appearance and password prompt.");
+    button = gtk_button_new_with_label("Lock screen now");
+    gtk_widget_set_halign(button, GTK_ALIGN_START);
+    g_signal_connect(button, "clicked", G_CALLBACK(lock_desktop_now), app);
     gtk_box_pack_start(GTK_BOX(card), button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), card, FALSE, FALSE, 0);
 

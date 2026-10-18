@@ -22,8 +22,17 @@
 #include "dock/dock.h"
 #include "misc/garbage_collector/garbage_collector.h"
 #include "lib/system_status.h"
+#include "lib/lock_screen.h"
 
 static GSubprocess *compositor_process;
+static MacosDeLockScreen *desktop_lock_screen;
+static GDBusConnection *desktop_bus_connection;
+static GDBusNodeInfo *desktop_bus_introspection;
+static guint desktop_bus_registration;
+static guint desktop_bus_name_owner;
+#define DESKTOP_BUS_NAME "org.macosde.Desktop"
+#define DESKTOP_BUS_OBJECT "/org/macosde/Desktop"
+#define DESKTOP_BUS_INTERFACE "org.macosde.Desktop"
 char *get_asset_path(const char *relative_path);
 
 typedef enum {
@@ -40,6 +49,108 @@ typedef struct {
 static GtkWidget *active_app_label;
 static gboolean desktop_dark_theme = TRUE;
 #define DESKTOP_FADE_DURATION_US 400000
+
+static const gchar desktop_bus_xml[] =
+    "<node>"
+    " <interface name='" DESKTOP_BUS_INTERFACE "'>"
+    "  <method name='Lock'/>"
+    " </interface>"
+    "</node>";
+
+static void
+on_desktop_bus_method_call(GDBusConnection *connection,
+                           const gchar *sender, const gchar *object_path,
+                           const gchar *interface_name,
+                           const gchar *method_name, GVariant *parameters,
+                           GDBusMethodInvocation *invocation,
+                           gpointer user_data)
+{
+    (void)connection;
+    (void)sender;
+    (void)object_path;
+    (void)interface_name;
+    (void)parameters;
+    (void)user_data;
+
+    GError *error = NULL;
+    if (g_str_equal(method_name, "Lock") &&
+        macos_de_lock_screen_lock_now(desktop_lock_screen, &error)) {
+        g_dbus_method_invocation_return_value(invocation, g_variant_new("()"));
+        return;
+    }
+    g_dbus_method_invocation_return_dbus_error(
+        invocation, "org.macosde.Desktop.Error.LockUnavailable",
+        error != NULL ? error->message :
+        "The desktop lock screen could not be activated.");
+    g_clear_error(&error);
+}
+
+static const GDBusInterfaceVTable desktop_bus_vtable = {
+    .method_call = on_desktop_bus_method_call
+};
+
+static void
+on_desktop_bus_name_lost(GDBusConnection *connection, const gchar *name,
+                         gpointer user_data)
+{
+    (void)connection;
+    (void)user_data;
+    g_warning("Could not own session D-Bus name %s; remote desktop actions are unavailable.",
+              name);
+}
+
+static void
+start_desktop_bus_service(void)
+{
+    GError *error = NULL;
+    desktop_bus_introspection = g_dbus_node_info_new_for_xml(
+        desktop_bus_xml, &error);
+    if (desktop_bus_introspection == NULL) {
+        g_warning("Could not create desktop D-Bus interface: %s",
+                  error->message);
+        g_clear_error(&error);
+        return;
+    }
+
+    desktop_bus_connection = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+    if (desktop_bus_connection == NULL) {
+        g_warning("Could not connect the desktop to the session D-Bus: %s",
+                  error->message);
+        g_clear_error(&error);
+        g_clear_pointer(&desktop_bus_introspection, g_dbus_node_info_unref);
+        return;
+    }
+
+    desktop_bus_registration = g_dbus_connection_register_object(
+        desktop_bus_connection, DESKTOP_BUS_OBJECT,
+        desktop_bus_introspection->interfaces[0], &desktop_bus_vtable,
+        NULL, NULL, &error);
+    if (desktop_bus_registration == 0) {
+        g_warning("Could not register desktop D-Bus actions: %s",
+                  error->message);
+        g_clear_error(&error);
+        g_clear_object(&desktop_bus_connection);
+        g_clear_pointer(&desktop_bus_introspection, g_dbus_node_info_unref);
+        return;
+    }
+    desktop_bus_name_owner = g_bus_own_name_on_connection(
+        desktop_bus_connection, DESKTOP_BUS_NAME, G_BUS_NAME_OWNER_FLAGS_NONE,
+        NULL, on_desktop_bus_name_lost, NULL, NULL);
+}
+
+static void
+stop_desktop_bus_service(void)
+{
+    if (desktop_bus_name_owner != 0)
+        g_bus_unown_name(desktop_bus_name_owner);
+    if (desktop_bus_connection != NULL && desktop_bus_registration != 0)
+        g_dbus_connection_unregister_object(
+            desktop_bus_connection, desktop_bus_registration);
+    g_clear_object(&desktop_bus_connection);
+    g_clear_pointer(&desktop_bus_introspection, g_dbus_node_info_unref);
+    desktop_bus_name_owner = 0;
+    desktop_bus_registration = 0;
+}
 
 typedef struct {
     GtkWidget *window;
@@ -246,12 +357,6 @@ static void on_power_command_finished(GObject *source_object,
 
 static void perform_power_action(PowerAction action) {
     if (action == POWER_ACTION_LOGOUT) {
-        const char *supervisor_pid = g_getenv("MACOS_DE_SUPERVISOR_PID");
-        if (supervisor_pid && *supervisor_pid) {
-            char *end = NULL;
-            long pid = strtol(supervisor_pid, &end, 10);
-            if (end && *end == '\0' && pid > 1) kill((pid_t)pid, SIGTERM);
-        }
         gtk_main_quit();
         return;
     }
@@ -850,6 +955,19 @@ void launch_desktop_environment(gboolean success, const char *error_message,
 
     // 4. Initialize Floating macOS Dock.
     init_dock();
+    desktop_lock_screen = macos_de_lock_screen_new(
+        topbar_win, power_button, clock_label, active_app_label, status_icons,
+        get_asset_path("assets/wallpaper/mac.png"));
+    start_desktop_bus_service();
+    GError *lock_error = NULL;
+    if (!macos_de_lock_screen_lock_now(desktop_lock_screen, &lock_error)) {
+        const char *message = lock_error != NULL
+            ? lock_error->message
+            : "The desktop could not be secured after startup.";
+        g_warning("Could not lock the desktop after startup: %s", message);
+        show_startup_error(message);
+        g_clear_error(&lock_error);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -872,6 +990,9 @@ int main(int argc, char *argv[]) {
     start_system_boot(startup_dir, launch_desktop_environment, NULL);
 
     gtk_main();
+    stop_desktop_bus_service();
+    macos_de_lock_screen_free(desktop_lock_screen);
+    desktop_lock_screen = NULL;
     cleanup_cursor_system();
     stop_compositor();
     return 0;

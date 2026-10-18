@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = $(shell pkg-config --cflags gtk+-3.0) -I. -Iwallpaper_engine -Icursor_engine -Istartup_engine -Idock -Iwindow_manager
-LIBS = $(shell pkg-config --libs gtk+-3.0) $(shell pkg-config --libs x11 pangoft2)
+LIBS = $(shell pkg-config --libs gtk+-3.0) $(shell pkg-config --libs x11 pangoft2) -lXss -lpam
 X11_CFLAGS = $(shell pkg-config --cflags x11)
 X11_LIBS = $(shell pkg-config --libs x11)
 WM_CFLAGS = $(shell pkg-config --cflags x11 xext xft xcursor gdk-pixbuf-2.0 fontconfig glib-2.0) -Wall -Wextra
@@ -14,6 +14,7 @@ CSS_DIR = css
 
 CORE_SRCS = main.c \
             lib/system_status.c \
+            lib/lock_screen.c \
             lib/dock_settings.c \
             $(wildcard wallpaper_engine/*.c) \
             $(wildcard desktop_engine/*.c) \

@@ -299,8 +299,11 @@ static gboolean run_startup_frame(gpointer user_data) {
 
     if (sc->current_frame == TOTAL_STARTUP_FRAMES - 1 && sc->loader_done) {
         sc->fading_out = TRUE;
+        if (sc->callback != NULL) {
+            sc->callback(TRUE, NULL, sc->user_data);
+            sc->callback = NULL;
+        }
         sc->fade_start_time = g_get_monotonic_time();
-        if (sc->callback) sc->callback(TRUE, NULL, sc->user_data);
     }
     return G_SOURCE_CONTINUE;
 }
