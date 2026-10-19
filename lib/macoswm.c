@@ -68,6 +68,7 @@ struct ManagedWindow {
     int minimized;
     int fullscreen;
     int client_decorated;
+    int resize_handles_mapped;
     ManagedWindow *next;
 };
 
@@ -138,6 +139,10 @@ struct MacosWm {
     int drag_window_y;
     int drag_window_width;
     int drag_window_height;
+    int drag_panel_height;
+    int drag_min_width;
+    int drag_min_height;
+    long long drag_visibility_at_ms;
     int resizing;
     int resize_edges;
     unsigned int drag_button;
@@ -1514,7 +1519,7 @@ static ManagedWindow *manage_window(MacosWm *wm, Window client) {
 
     XSelectInput(wm->display, client,
                  PropertyChangeMask | StructureNotifyMask | EnterWindowMask |
-                 LeaveWindowMask | PointerMotionMask);
+                 LeaveWindowMask);
     XAddToSaveSet(wm->display, client);
     XSetWindowBorderWidth(wm->display, client, 0);
     XReparentWindow(wm->display, client, managed->frame, 0, decoration);
@@ -1636,8 +1641,11 @@ static int resize_handle_edges(int handle) {
 static void update_resize_handles(MacosWm *wm, ManagedWindow *managed) {
     if (!managed->resize_handles[0]) return;
     if (managed->maximized || managed->fullscreen) {
-        for (int i = 0; i < 8; i++) {
-            XUnmapWindow(wm->display, managed->resize_handles[i]);
+        if (managed->resize_handles_mapped) {
+            for (int i = 0; i < 8; i++) {
+                XUnmapWindow(wm->display, managed->resize_handles[i]);
+            }
+            managed->resize_handles_mapped = 0;
         }
         return;
     }
@@ -1670,9 +1678,12 @@ static void update_resize_handles(MacosWm *wm, ManagedWindow *managed) {
         XMoveResizeWindow(wm->display, managed->resize_handles[i], x[i], y[i],
                           (unsigned int)MAX(1, width[i]),
                           (unsigned int)MAX(1, height[i]));
-        XMapWindow(wm->display, managed->resize_handles[i]);
-        XRaiseWindow(wm->display, managed->resize_handles[i]);
+        if (!managed->resize_handles_mapped) {
+            XMapWindow(wm->display, managed->resize_handles[i]);
+            XRaiseWindow(wm->display, managed->resize_handles[i]);
+        }
     }
+    managed->resize_handles_mapped = 1;
 }
 
 static void update_client_resize_cursor(MacosWm *wm,
@@ -1707,6 +1718,19 @@ static void begin_window_drag(MacosWm *wm, ManagedWindow *managed,
     wm->drag_window_y = managed->y;
     wm->drag_window_width = managed->width;
     wm->drag_window_height = managed->height;
+    wm->drag_panel_height = top_panel_height(wm);
+    wm->drag_min_width = 1;
+    wm->drag_min_height = 1;
+    if (resizing) {
+        XSizeHints hints;
+        long supplied;
+        if (XGetWMNormalHints(wm->display, managed->client, &hints,
+                              &supplied) && (hints.flags & PMinSize)) {
+            wm->drag_min_width = MAX(1, hints.min_width);
+            wm->drag_min_height = MAX(1, hints.min_height);
+        }
+    }
+    wm->drag_visibility_at_ms = 0;
     wm->drag_button = event->button;
     Cursor cursor = resizing ? cursor_for_resize_edges(wm, resize_edges)
                              : wm->move_cursor;
@@ -1731,15 +1755,8 @@ static void update_window_drag(MacosWm *wm, int root_x, int root_y) {
     int delta_x = root_x - wm->drag_root_x;
     int delta_y = root_y - wm->drag_root_y;
     if (wm->resizing) {
-        int min_width = 1;
-        int min_height = 1;
-        XSizeHints hints;
-        long supplied;
-        if (XGetWMNormalHints(wm->display, managed->client, &hints, &supplied) &&
-            (hints.flags & PMinSize)) {
-            min_width = hints.min_width;
-            min_height = hints.min_height;
-        }
+        int min_width = wm->drag_min_width;
+        int min_height = wm->drag_min_height;
         managed->x = wm->drag_window_x;
         managed->y = wm->drag_window_y;
         managed->width = wm->drag_window_width;
@@ -1768,7 +1785,7 @@ static void update_window_drag(MacosWm *wm, int root_x, int root_y) {
             }
             managed->height = min_height;
         }
-        int panel_height = top_panel_height(wm);
+        int panel_height = wm->drag_panel_height;
         if (managed->y < panel_height) {
             int bottom = managed->y + managed->height;
             managed->y = panel_height;
@@ -1781,11 +1798,17 @@ static void update_window_drag(MacosWm *wm, int root_x, int root_y) {
     } else {
         managed->x = wm->drag_window_x + delta_x;
         int requested_y = wm->drag_window_y + delta_y;
-        int panel_height = top_panel_height(wm);
+        int panel_height = wm->drag_panel_height;
         managed->y = requested_y > panel_height ? requested_y : panel_height;
         XMoveWindow(wm->display, managed->frame, managed->x, managed->y);
     }
-    update_shell_visibility(wm);
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long long now_ms = (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+    if (now_ms - wm->drag_visibility_at_ms >= 50) {
+        update_shell_visibility(wm);
+        wm->drag_visibility_at_ms = now_ms;
+    }
 }
 
 static unsigned int drag_button_mask(unsigned int button) {
@@ -2207,6 +2230,14 @@ int macos_wm_run(MacosWm *wm) {
         if ((!pending && poll_status <= 0) || !XPending(wm->display)) continue;
         XEvent event;
         XNextEvent(wm->display, &event);
+        if (event.type == MotionNotify && wm->drag_window) {
+            XEvent next;
+            while (XPending(wm->display) && XPeekEvent(wm->display, &next) &&
+                   next.type == MotionNotify &&
+                   next.xmotion.window == event.xmotion.window) {
+                XNextEvent(wm->display, &event);
+            }
+        }
         switch (event.type) {
         case MapRequest: {
             ManagedWindow *managed = find_client(wm, event.xmaprequest.window);
