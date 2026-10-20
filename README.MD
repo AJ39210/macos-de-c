@@ -30,9 +30,10 @@ utilities.
   brightness keyboard keys where supported by the keyboard.
 - Automatic lock screen with PAM-backed Linux account-password authentication,
   an optional lock-screen wallpaper, and screen blanking after three minutes.
-- The desktop locks after the startup animation; use the current Linux account
-  password to enter the session.
-- Finder, Easy-File, Easy-Term, Notification Manager, and Screenshot Manager.
+- The desktop locks after the startup animation for normal users; `livesession`,
+  `default`, and `system` accounts start unlocked and do not idle-lock.
+- Finder, Easy-File, Easy-Term, Easy-monitor, Notification Manager, and
+  Screenshot Manager.
 - Session restart command: `macos-de-restart` restarts the desktop session
   without logging out or restarting the computer.
 - Session logs are written to `/var/logs/MACOS-DE-LOGS.txt` when writable;
@@ -50,12 +51,16 @@ sudo apt update
 sudo apt install build-essential make pkg-config \
   libgtk-3-dev libx11-dev libxext-dev libxft-dev libxcursor-dev \
   libgdk-pixbuf-2.0-dev libfontconfig1-dev libpango1.0-dev \
-  libpam0g-dev libxss-dev
+  libpam0g-dev libxss-dev libvte-2.91-0 picom
 ```
 
 The desktop and window manager are built from source. Some optional controls
 use system utilities when available, such as `wpctl`, `pactl`, `amixer`, or
-`xbacklight`.
+`xbacklight`. GTK/GDK and Cairo provide the transparent drawing surface; picom
+is the X11 compositor required to display it. macOS-DE starts picom with
+fullscreen unredirect enabled when no compositor is already active, allowing
+supported fullscreen games to bypass compositing. Easy-Term loads VTE 2.91 at
+runtime.
 
 The lock screen uses X11's ScreenSaver extension to detect inactivity and
 PAM to verify the current Linux account password. It does not suspend the
@@ -65,6 +70,9 @@ behind a tall, rounded, blurred glass panel on the left, with the clock and
 password prompt together. Locking dims the display; mouse or keyboard activity
 restores its pre-lock brightness while the session remains locked. The top-right
 session menu remains available on the lock screen.
+For ordinary accounts, the lock timeout is read from the Lock Screen section
+of DE Settings. The `livesession`, `default`, and `system` accounts skip startup
+locking and automatic idle locking, which is intended for live/demo sessions.
 
 ## Build
 
@@ -116,6 +124,10 @@ rule. It intentionally does not remove the user from the `video` group.
 After installing, log out and select **macOS-DE** from the display manager's
 session menu.
 
+For a step-by-step manual installation on custom distributions, see
+[`scripts/README.md`](scripts/README.md). A user-local installation without
+administrator privileges is also available through `scripts/install2.sh`.
+
 ## Included applications
 
 - **Finder** — application launcher and dock integration.
@@ -123,6 +135,7 @@ session menu.
   manager preferences.
 - **Easy-File** — file browsing and common file actions.
 - **Easy-Term** — terminal emulator with macOS-DE session commands.
+- **Easy-monitor** — live CPU, memory, and storage overview.
 - **Notification Manager** — notification service and history.
 - **Screenshot Manager** — screen capture utility.
 

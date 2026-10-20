@@ -4,9 +4,11 @@
 #include <math.h>
 #include <stdio.h>
 #include <spawn.h>
+#include <pwd.h>
 #include <sys/utsname.h>
 #include <string.h>
 #include <glib/gstdio.h>
+#include <unistd.h>
 
 extern char **environ;
 
@@ -33,6 +35,16 @@ static gchar *requested_settings_page;
 
 static gboolean validate_widget_zip(const gchar *path, GError **error);
 static void refresh_widget_status(SettingsApp *app);
+
+static gboolean
+current_user_disables_automatic_lock(void)
+{
+    struct passwd *account = getpwuid(getuid());
+    return account != NULL &&
+        (g_ascii_strcasecmp(account->pw_name, "livesession") == 0 ||
+         g_ascii_strcasecmp(account->pw_name, "default") == 0 ||
+         g_ascii_strcasecmp(account->pw_name, "system") == 0);
+}
 
 typedef struct {
     double angle;
@@ -1610,7 +1622,11 @@ activate(GtkApplication *application, gpointer user_data)
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), "0", "Never");
     gint lock_timeout = g_key_file_get_integer(
         app->settings, "LockScreen", "idle_minutes", NULL);
-    if (lock_timeout != 0 && lock_timeout != 3 && lock_timeout != 15 &&
+    gboolean automatic_lock_enabled =
+        !current_user_disables_automatic_lock();
+    if (!automatic_lock_enabled)
+        lock_timeout = 0;
+    else if (lock_timeout != 0 && lock_timeout != 3 && lock_timeout != 15 &&
         lock_timeout != 30 && lock_timeout != 60 && lock_timeout != 120)
         lock_timeout = 3;
     gchar lock_timeout_text[16];
@@ -1619,9 +1635,12 @@ activate(GtkApplication *application, gpointer user_data)
                    app->settings, "LockScreen", "idle_minutes", NULL)
                    ? 3 : lock_timeout);
     gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), lock_timeout_text);
+    gtk_widget_set_sensitive(combo, automatic_lock_enabled);
     app->lock_timeout = combo;
     add_setting_row(card, "Lock after inactivity",
-                    "Require your Linux account password to return to the desktop.",
+                    automatic_lock_enabled
+                        ? "Require your Linux account password to return to the desktop."
+                        : "Automatic locking is disabled for this system session.",
                     combo);
     g_signal_connect(combo, "changed",
                      G_CALLBACK(on_lock_timeout_changed), app);

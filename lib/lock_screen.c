@@ -64,6 +64,7 @@ typedef struct {
 } PamConversationData;
 
 static void load_timeout_setting(MacosDeLockScreen *lock_screen);
+static gboolean user_disables_automatic_lock(const gchar *username);
 static void raise_topbar(MacosDeLockScreen *lock_screen);
 static GdkWindow *prepare_lock_window(GtkWidget *widget,
                                       const GdkRectangle *geometry);
@@ -866,8 +867,27 @@ load_timeout_setting(MacosDeLockScreen *lock_screen)
                   timeout);
         timeout = 3;
     }
-    lock_screen->timeout_minutes = (guint)timeout;
+    lock_screen->timeout_minutes =
+        user_disables_automatic_lock(lock_screen->username)
+            ? 0 : (guint)timeout;
     g_key_file_unref(settings);
+}
+
+static gboolean
+user_disables_automatic_lock(const gchar *username)
+{
+    return username != NULL &&
+        (g_ascii_strcasecmp(username, "livesession") == 0 ||
+         g_ascii_strcasecmp(username, "default") == 0 ||
+         g_ascii_strcasecmp(username, "system") == 0);
+}
+
+gboolean
+macos_de_lock_screen_should_lock_on_startup(
+    const MacosDeLockScreen *lock_screen)
+{
+    return lock_screen != NULL &&
+        !user_disables_automatic_lock(lock_screen->username);
 }
 
 static void

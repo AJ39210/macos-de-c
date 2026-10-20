@@ -707,19 +707,20 @@ static void start_compositor_if_needed(void) {
     GdkScreen *screen = gdk_screen_get_default();
     if (gdk_screen_is_composited(screen)) return;
 
-    char *compositor_path = g_find_program_in_path("xcompmgr");
+    char *compositor_path = g_find_program_in_path("picom");
     if (!compositor_path) {
-        g_warning("No compositor is active and xcompmgr was not found; dock transparency will be limited.");
+        g_warning("No compositor is active and picom was not found; install picom for transparency and fullscreen-game unredirect support.");
         return;
     }
 
     GError *error = NULL;
     compositor_process = g_subprocess_new(
-        G_SUBPROCESS_FLAGS_NONE, &error, compositor_path, "-c", NULL);
+        G_SUBPROCESS_FLAGS_NONE, &error, compositor_path,
+        "--unredir-if-possible", NULL);
     g_free(compositor_path);
 
     if (!compositor_process) {
-        g_warning("Could not start xcompmgr: %s", error->message);
+        g_warning("Could not start picom: %s", error->message);
         g_clear_error(&error);
     }
 }
@@ -730,7 +731,7 @@ static void stop_compositor(void) {
     g_subprocess_send_signal(compositor_process, SIGTERM);
     GError *error = NULL;
     if (!g_subprocess_wait(compositor_process, NULL, &error)) {
-        g_warning("Could not stop xcompmgr cleanly: %s", error->message);
+        g_warning("Could not stop picom cleanly: %s", error->message);
         g_clear_error(&error);
     }
     g_object_unref(compositor_process);
@@ -960,7 +961,8 @@ void launch_desktop_environment(gboolean success, const char *error_message,
         get_asset_path("assets/wallpaper/mac.png"));
     start_desktop_bus_service();
     GError *lock_error = NULL;
-    if (!macos_de_lock_screen_lock_now(desktop_lock_screen, &lock_error)) {
+    if (macos_de_lock_screen_should_lock_on_startup(desktop_lock_screen) &&
+        !macos_de_lock_screen_lock_now(desktop_lock_screen, &lock_error)) {
         const char *message = lock_error != NULL
             ? lock_error->message
             : "The desktop could not be secured after startup.";

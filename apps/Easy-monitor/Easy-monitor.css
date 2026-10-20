@@ -1,0 +1,154 @@
+window.easy-monitor {
+    background: #f5f5f7;
+    color: #1d1d1f;
+    font-family: "Cantarell", "Segoe UI", sans-serif;
+}
+
+.sidebar {
+    background: #ececf0;
+    border-right: 1px solid rgba(60, 60, 67, 0.13);
+}
+
+.sidebar-brand {
+    color: #202126;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 4px 0 15px;
+}
+
+.sidebar-section {
+    color: #88888e;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+    padding: 11px 9px 5px;
+}
+
+button.nav-button {
+    color: #55565d;
+    background: transparent;
+    border: 0;
+    border-radius: 8px;
+    box-shadow: none;
+    margin: 2px 0;
+    padding: 8px 10px;
+}
+
+button.nav-button:hover {
+    background: rgba(255, 255, 255, 0.62);
+}
+
+button.nav-button:selected,
+button.nav-button.active {
+    color: #1769d2;
+    background: rgba(0, 122, 255, 0.12);
+    font-weight: 700;
+}
+
+.toolbar {
+    background: rgba(255, 255, 255, 0.88);
+    border-bottom: 1px solid rgba(60, 60, 67, 0.12);
+}
+
+.window-title {
+    color: #242429;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.updated-label {
+    color: #818188;
+    font-size: 10px;
+}
+
+.page {
+    background: #f5f5f7;
+}
+
+.page-title {
+    color: #1d1d1f;
+    font-size: 25px;
+    font-weight: 700;
+}
+
+.page-subtitle {
+    color: #77777e;
+    font-size: 12px;
+}
+
+.section-title {
+    color: #2d2d32;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.card {
+    background: #ffffff;
+    border: 1px solid rgba(60, 60, 67, 0.11);
+    border-radius: 13px;
+}
+
+.card-title {
+    color: #66666e;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.metric-value {
+    color: #1d1d1f;
+    font-size: 30px;
+    font-weight: 700;
+}
+
+.metric-secondary {
+    color: #77777e;
+    font-size: 11px;
+}
+
+.detail-value {
+    color: #25252a;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.detail-caption {
+    color: #85858b;
+    font-size: 10px;
+}
+
+.error-label {
+    color: #c73737;
+    font-size: 10px;
+}
+
+.muted-label {
+    color: #83838a;
+    font-size: 11px;
+}
+
+progressbar trough {
+    min-height: 7px;
+    background: #e8e8ed;
+    border: 0;
+    border-radius: 8px;
+}
+
+progressbar progress {
+    min-height: 7px;
+    background: #1683ff;
+    border: 0;
+    border-radius: 8px;
+}
+
+progressbar.memory progress {
+    background: #9b65e8;
+}
+
+progressbar.storage progress {
+    background: #34a873;
+}
+
+.footer-note {
+    color: #88888e;
+    font-size: 10px;
+}

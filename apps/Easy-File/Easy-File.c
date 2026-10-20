@@ -2,7 +2,11 @@
 #include <gtk/gtk.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
+#include <grp.h>
+#include <pwd.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 enum {
     COLUMN_ICON,
@@ -43,24 +47,32 @@ typedef struct {
     GtkListStore *store;
     GtkTreeModelFilter *filter;
     GPtrArray *history;
+    GPtrArray *cut_paths;
     gint history_index;
     gchar *current_path;
     gchar *context_path;
     gchar *asset_dir;
+    gchar *trash_files_path;
     gboolean context_is_directory;
 } EasyFile;
 
 typedef enum {
     MENU_OPEN,
     MENU_OPEN_WITH_DEFAULT,
+    MENU_CUT_FILES,
     MENU_COPY_FILES,
     MENU_COPY_PATH,
     MENU_PASTE_FILES,
     MENU_PROPERTIES,
     MENU_RENAME,
     MENU_DELETE,
+    MENU_PERMANENT_DELETE,
+    MENU_RESTORE,
+    MENU_EMPTY_TRASH,
     MENU_ADD_TO_DESKTOP,
     MENU_NEW_FOLDER,
+    MENU_NEW_FILE,
+    MENU_SELECT_ALL,
     MENU_REFRESH
 } MenuAction;
 
@@ -70,6 +82,7 @@ static void open_path(EasyFile *app, const gchar *path, gboolean is_directory);
 static void paste_files(EasyFile *app);
 static void set_inline_error(EasyFile *app, const gchar *message);
 static GPtrArray *selected_paths(EasyFile *app);
+static void operate_on_trash_selection(EasyFile *app, gboolean restore);
 
 static void
 free_clipboard_file_list(gpointer data)
@@ -120,6 +133,35 @@ copy_paths_to_clipboard(GPtrArray *paths)
         gtk_clipboard_set_can_store(clipboard, &target, 1);
         gtk_clipboard_store(clipboard);
     }
+}
+
+static gboolean
+path_is_in_trash(EasyFile *app, const gchar *path)
+{
+    gsize prefix_length = strlen(app->trash_files_path);
+    return g_str_has_prefix(path, app->trash_files_path) &&
+           (path[prefix_length] == G_DIR_SEPARATOR ||
+            path[prefix_length] == '\0');
+}
+
+static gboolean
+path_is_marked_for_cut(EasyFile *app, const gchar *path)
+{
+    for (guint i = 0; i < app->cut_paths->len; i++) {
+        if (g_str_equal(path, g_ptr_array_index(app->cut_paths, i)))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static void
+mark_paths_for_cut(EasyFile *app, GPtrArray *paths)
+{
+    g_ptr_array_set_size(app->cut_paths, 0);
+    for (guint i = 0; i < paths->len; i++)
+        g_ptr_array_add(app->cut_paths,
+                        g_strdup(g_ptr_array_index(paths, i)));
+    copy_paths_to_clipboard(paths);
 }
 
 static gboolean
@@ -196,12 +238,16 @@ on_clipboard_files_received(GtkClipboard *clipboard,
     }
 
     GFile *destination_dir = g_file_new_for_path(app->current_path);
+    gboolean all_succeeded = TRUE;
     for (guint i = 0; uris[i] != NULL; i++) {
         GFile *source = g_file_new_for_uri(uris[i]);
+        gchar *source_path = g_file_get_path(source);
         gchar *basename = g_file_get_basename(source);
         GFile *destination = basename
             ? g_file_get_child(destination_dir, basename) : NULL;
         GError *error = NULL;
+        gboolean move_source = source_path != NULL &&
+                               path_is_marked_for_cut(app, source_path);
         gboolean source_is_directory = g_file_query_file_type(
             source, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL) ==
             G_FILE_TYPE_DIRECTORY;
@@ -213,18 +259,26 @@ on_clipboard_files_received(GtkClipboard *clipboard,
                 basename ? basename : uris[i]);
             set_inline_error(app, message);
             g_free(message);
-        } else if (!copy_file_recursively(source, destination, &error)) {
+            all_succeeded = FALSE;
+        } else if (move_source
+                       ? !g_file_move(source, destination, G_FILE_COPY_NONE,
+                                      NULL, NULL, NULL, &error)
+                       : !copy_file_recursively(source, destination, &error)) {
             gchar *message = g_strdup_printf(
                 "Could not paste %s: %s", basename ? basename : uris[i],
                 error ? error->message : "copy failed.");
             set_inline_error(app, message);
             g_free(message);
             g_clear_error(&error);
+            all_succeeded = FALSE;
         }
         g_clear_object(&destination);
+        g_free(source_path);
         g_free(basename);
         g_object_unref(source);
     }
+    if (all_succeeded)
+        g_ptr_array_set_size(app->cut_paths, 0);
     g_object_unref(destination_dir);
     g_strfreev(uris);
     refresh_directory(app);
@@ -736,6 +790,10 @@ selected_paths(EasyFile *app)
 static void
 delete_selected(EasyFile *app)
 {
+    if (path_is_in_trash(app, app->current_path)) {
+        operate_on_trash_selection(app, FALSE);
+        return;
+    }
     GPtrArray *paths = selected_paths(app);
     if (paths->len == 0) {
         g_ptr_array_unref(paths);
@@ -770,6 +828,245 @@ delete_selected(EasyFile *app)
         refresh_directory(app);
     }
     g_ptr_array_unref(paths);
+}
+
+static gboolean
+delete_file_recursively(GFile *file, GError **error)
+{
+    GFileInfo *info = g_file_query_info(
+        file, G_FILE_ATTRIBUTE_STANDARD_TYPE,
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, error);
+    if (info == NULL)
+        return FALSE;
+
+    gboolean deleted = TRUE;
+    if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY) {
+        GFileEnumerator *enumerator = g_file_enumerate_children(
+            file, G_FILE_ATTRIBUTE_STANDARD_NAME,
+            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, error);
+        if (enumerator == NULL) {
+            g_object_unref(info);
+            return FALSE;
+        }
+        while (deleted) {
+            GFileInfo *child_info = g_file_enumerator_next_file(
+                enumerator, NULL, error);
+            if (child_info == NULL) {
+                if (error != NULL && *error != NULL)
+                    deleted = FALSE;
+                break;
+            }
+            GFile *child = g_file_get_child(file, g_file_info_get_name(child_info));
+            deleted = delete_file_recursively(child, error);
+            g_object_unref(child);
+            g_object_unref(child_info);
+        }
+        if (!g_file_enumerator_close(enumerator, NULL,
+                                     deleted ? error : NULL))
+            deleted = FALSE;
+        g_object_unref(enumerator);
+    }
+    g_object_unref(info);
+    return deleted && g_file_delete(file, NULL, error);
+}
+
+static gchar *
+trash_info_path(EasyFile *app, const gchar *trashed_path)
+{
+    gchar *name = g_path_get_basename(trashed_path);
+    gchar *info_dir = g_build_filename(app->trash_files_path, "..", "info", NULL);
+    gchar *filename = g_strconcat(name, ".trashinfo", NULL);
+    gchar *result = g_build_filename(info_dir, filename, NULL);
+    g_free(filename);
+    g_free(info_dir);
+    g_free(name);
+    return result;
+}
+
+static gchar *
+original_path_from_trash_info(const gchar *info_path, GError **error)
+{
+    GKeyFile *info = g_key_file_new();
+    if (!g_key_file_load_from_file(info, info_path, G_KEY_FILE_NONE, error)) {
+        g_key_file_unref(info);
+        return NULL;
+    }
+    gchar *encoded_path = g_key_file_get_string(
+        info, "Trash Info", "Path", error);
+    g_key_file_unref(info);
+    if (encoded_path == NULL)
+        return NULL;
+
+    gchar *original_path = g_uri_unescape_string(encoded_path, NULL);
+    g_free(encoded_path);
+    if (original_path == NULL || !g_path_is_absolute(original_path)) {
+        g_free(original_path);
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                            "The Trash entry has an invalid original path.");
+        return NULL;
+    }
+    return original_path;
+}
+
+static void
+operate_on_trash_selection(EasyFile *app, gboolean restore)
+{
+    GPtrArray *paths = selected_paths(app);
+    if (!restore && paths->len > 0) {
+        GtkWidget *dialog = gtk_message_dialog_new(
+            GTK_WINDOW(app->window),
+            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+            GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
+            paths->len == 1 ? "Permanently delete this item?"
+                            : "Permanently delete these %u items?",
+            paths->len);
+        gtk_message_dialog_format_secondary_text(
+            GTK_MESSAGE_DIALOG(dialog), "This cannot be undone.");
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "_Cancel",
+                              GTK_RESPONSE_CANCEL);
+        gtk_dialog_add_button(GTK_DIALOG(dialog), "_Delete Permanently",
+                              GTK_RESPONSE_ACCEPT);
+        gtk_dialog_set_default_response(GTK_DIALOG(dialog),
+                                        GTK_RESPONSE_CANCEL);
+        gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        if (response != GTK_RESPONSE_ACCEPT) {
+            g_ptr_array_unref(paths);
+            return;
+        }
+    }
+    for (guint i = 0; i < paths->len; i++) {
+        const gchar *path = g_ptr_array_index(paths, i);
+        GFile *file = g_file_new_for_path(path);
+        GError *error = NULL;
+        gboolean succeeded = FALSE;
+        if (restore) {
+            gchar *info_path = trash_info_path(app, path);
+            gchar *original_path = original_path_from_trash_info(info_path,
+                                                                 &error);
+            if (original_path != NULL) {
+                GFile *destination = g_file_new_for_path(original_path);
+                GFile *parent = g_file_get_parent(destination);
+                if (parent == NULL || !g_file_query_exists(parent, NULL)) {
+                    g_set_error_literal(&error, G_IO_ERROR,
+                                        G_IO_ERROR_NOT_FOUND,
+                                        "The original folder no longer exists.");
+                } else if (g_file_query_exists(destination, NULL)) {
+                    g_set_error_literal(&error, G_IO_ERROR,
+                                        G_IO_ERROR_EXISTS,
+                                        "An item with that name already exists at the original location.");
+                } else {
+                    succeeded = g_file_move(file, destination,
+                                            G_FILE_COPY_NONE, NULL, NULL, NULL,
+                                            &error);
+                }
+                if (succeeded) {
+                    GFile *info_file = g_file_new_for_path(info_path);
+                    if (!g_file_delete(info_file, NULL, &error))
+                        succeeded = FALSE;
+                    g_object_unref(info_file);
+                }
+                if (parent != NULL)
+                    g_object_unref(parent);
+                g_object_unref(destination);
+            }
+            g_free(original_path);
+            g_free(info_path);
+        } else {
+            succeeded = delete_file_recursively(file, &error);
+            if (succeeded) {
+                gchar *info_path = trash_info_path(app, path);
+                GFile *info_file = g_file_new_for_path(info_path);
+                if (g_file_query_exists(info_file, NULL) &&
+                    !g_file_delete(info_file, NULL, &error))
+                    succeeded = FALSE;
+                g_object_unref(info_file);
+                g_free(info_path);
+            }
+        }
+        if (!succeeded) {
+            gchar *message = g_strdup_printf(
+                "Could not %s %s: %s",
+                restore ? "restore" : "permanently delete",
+                path, error != NULL ? error->message : "operation failed.");
+            set_inline_error(app, message);
+            g_free(message);
+        }
+        g_clear_error(&error);
+        g_object_unref(file);
+    }
+    g_ptr_array_unref(paths);
+    refresh_directory(app);
+}
+
+static void
+empty_trash(EasyFile *app)
+{
+    GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(app->window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
+        "Permanently delete all items in Trash?");
+    gtk_message_dialog_format_secondary_text(
+        GTK_MESSAGE_DIALOG(dialog),
+        "This cannot be undone.");
+    gtk_dialog_add_button(GTK_DIALOG(dialog), "_Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_add_button(GTK_DIALOG(dialog), "_Empty Trash",
+                          GTK_RESPONSE_ACCEPT);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    if (response != GTK_RESPONSE_ACCEPT)
+        return;
+
+    const gchar *subdirectories[] = { "files", "info", NULL };
+    for (guint i = 0; subdirectories[i] != NULL; i++) {
+        gchar *directory_path = g_build_filename(
+            app->trash_files_path, "..", subdirectories[i], NULL);
+        GFile *directory = g_file_new_for_path(directory_path);
+        GError *error = NULL;
+        GFileEnumerator *enumerator = g_file_enumerate_children(
+            directory, G_FILE_ATTRIBUTE_STANDARD_NAME,
+            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, &error);
+        if (enumerator == NULL) {
+            if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
+                set_inline_error(app, error ? error->message :
+                                 "Could not read the Trash folder.");
+            }
+            g_clear_error(&error);
+            g_object_unref(directory);
+            g_free(directory_path);
+            continue;
+        }
+        while (TRUE) {
+            GFileInfo *info = g_file_enumerator_next_file(
+                enumerator, NULL, &error);
+            if (info == NULL)
+                break;
+            GFile *child = g_file_get_child(directory,
+                                            g_file_info_get_name(info));
+            if (!delete_file_recursively(child, &error)) {
+                gchar *message = g_strdup_printf(
+                    "Could not empty Trash: %s",
+                    error ? error->message : "an item could not be deleted.");
+                set_inline_error(app, message);
+                g_free(message);
+                g_clear_error(&error);
+            }
+            g_object_unref(child);
+            g_object_unref(info);
+        }
+        if (error != NULL &&
+            !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
+            set_inline_error(app, error->message);
+            g_clear_error(&error);
+        }
+        g_file_enumerator_close(enumerator, NULL, NULL);
+        g_object_unref(enumerator);
+        g_object_unref(directory);
+        g_free(directory_path);
+    }
+    refresh_directory(app);
 }
 
 static void
@@ -848,35 +1145,171 @@ add_to_desktop(EasyFile *app, const gchar *path)
 }
 
 static void
+add_property_row(GtkWidget *grid, gint row, const gchar *label,
+                 const gchar *value)
+{
+    GtkWidget *name = gtk_label_new(label);
+    GtkWidget *content = gtk_label_new(value != NULL && *value != '\0'
+                                        ? value : "Not available");
+    gtk_widget_set_halign(name, GTK_ALIGN_START);
+    gtk_widget_set_halign(content, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(content), TRUE);
+    gtk_label_set_selectable(GTK_LABEL(name), TRUE);
+    gtk_label_set_selectable(GTK_LABEL(content), TRUE);
+    gtk_grid_attach(GTK_GRID(grid), name, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), content, 1, row, 1, 1);
+}
+
+static gchar *
+format_file_time(GFileInfo *info, const gchar *attribute)
+{
+    if (!g_file_info_has_attribute(info, attribute))
+        return g_strdup("Not available");
+    guint64 timestamp = g_file_info_get_attribute_uint64(info, attribute);
+    if (timestamp == 0)
+        return g_strdup("Not available");
+    time_t value = (time_t)timestamp;
+    struct tm local_time;
+    if (localtime_r(&value, &local_time) == NULL)
+        return g_strdup("Not available");
+    gchar formatted[128];
+    if (strftime(formatted, sizeof(formatted), "%Y-%m-%d %H:%M:%S %Z",
+                 &local_time) == 0)
+        return g_strdup("Not available");
+    return g_strdup(formatted);
+}
+
+static gchar *
+format_file_owner(GFileInfo *info, const gchar *attribute, gboolean group)
+{
+    if (!g_file_info_has_attribute(info, attribute))
+        return g_strdup("Not available");
+    guint32 id = g_file_info_get_attribute_uint32(info, attribute);
+    if (group) {
+        struct group *entry = getgrgid((gid_t)id);
+        return entry != NULL ? g_strdup(entry->gr_name)
+                             : g_strdup_printf("%u", id);
+    }
+    struct passwd *entry = getpwuid((uid_t)id);
+    return entry != NULL ? g_strdup(entry->pw_name)
+                         : g_strdup_printf("%u", id);
+}
+
+static void
 show_properties(EasyFile *app, const gchar *path)
 {
     GFile *file = g_file_new_for_path(path);
     GError *error = NULL;
-    GFileInfo *info = g_file_query_info(file,
-        G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_SIZE ","
-        G_FILE_ATTRIBUTE_TIME_MODIFIED,
-        G_FILE_QUERY_INFO_NONE, NULL, &error);
+    GFileInfo *info = g_file_query_info(
+        file, G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+              G_FILE_ATTRIBUTE_STANDARD_SIZE ","
+              G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
+              G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK ","
+              G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET ","
+              G_FILE_ATTRIBUTE_TIME_MODIFIED ","
+              G_FILE_ATTRIBUTE_TIME_CREATED ","
+              G_FILE_ATTRIBUTE_TIME_ACCESS ","
+              G_FILE_ATTRIBUTE_UNIX_MODE ","
+              G_FILE_ATTRIBUTE_UNIX_UID ","
+              G_FILE_ATTRIBUTE_UNIX_GID ","
+              G_FILE_ATTRIBUTE_ACCESS_CAN_READ ","
+              G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE ","
+              G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE,
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, &error);
     if (info == NULL) {
         show_error(app, "Could not read properties",
-                   error != NULL ? error->message : "File information is unavailable.");
+                   error != NULL ? error->message :
+                   "File information is unavailable.");
         g_clear_error(&error);
         g_object_unref(file);
         return;
     }
-    gboolean is_directory = g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
-    gchar *size = is_directory ? g_strdup("Folder") :
-                  g_format_size(g_file_info_get_size(info));
+
+    GFileType type = g_file_info_get_file_type(info);
+    const gchar *kind = type == G_FILE_TYPE_DIRECTORY ? "Folder" :
+                        type == G_FILE_TYPE_SYMBOLIC_LINK ? "Symbolic link" :
+                        type == G_FILE_TYPE_SPECIAL ? "Special file" : "File";
     gchar *basename = g_file_get_basename(file);
-    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
+    gchar *parent = g_path_get_dirname(path);
+    gchar *size = type == G_FILE_TYPE_DIRECTORY
+        ? g_strdup("Folder size is not calculated")
+        : g_format_size(g_file_info_get_size(info));
+    gchar *modified = format_file_time(
+        info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
+    gchar *created = format_file_time(info, G_FILE_ATTRIBUTE_TIME_CREATED);
+    gchar *accessed = format_file_time(info, G_FILE_ATTRIBUTE_TIME_ACCESS);
+    gchar *content_type = g_strdup(
+        g_file_info_get_content_type(info) != NULL
+            ? g_file_info_get_content_type(info) : "Not available");
+    gchar *owner = format_file_owner(info, G_FILE_ATTRIBUTE_UNIX_UID, FALSE);
+    gchar *group = format_file_owner(info, G_FILE_ATTRIBUTE_UNIX_GID, TRUE);
+    gchar *permissions = g_file_info_has_attribute(
+        info, G_FILE_ATTRIBUTE_UNIX_MODE)
+        ? g_strdup_printf("%04o",
+            g_file_info_get_attribute_uint32(
+                info, G_FILE_ATTRIBUTE_UNIX_MODE) & 07777)
+        : g_strdup("Not available");
+    gboolean is_symlink = g_file_info_get_is_symlink(info);
+    const gchar *symlink_target =
+        g_file_info_get_symlink_target(info);
+    gchar *readable = g_strdup(
+        g_file_info_get_attribute_boolean(
+            info, G_FILE_ATTRIBUTE_ACCESS_CAN_READ) ? "Yes" : "No");
+    gchar *writable = g_strdup(
+        g_file_info_get_attribute_boolean(
+            info, G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE) ? "Yes" : "No");
+    gchar *deletable = g_strdup(
+        g_file_info_get_attribute_boolean(
+            info, G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE) ? "Yes" : "No");
+    gchar *access = g_strdup_printf("%s / %s / %s",
+                                    readable, writable, deletable);
+
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Properties", GTK_WINDOW(app->window),
         GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-        GTK_MESSAGE_INFO, GTK_BUTTONS_CLOSE, "%s", basename);
-    gchar *detail = g_strdup_printf("%s\n%s\n%s", is_directory ? "Folder" : "File", path, size);
-    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "%s", detail);
+        "_Close", GTK_RESPONSE_CLOSE, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *grid = gtk_grid_new();
+    gtk_container_set_border_width(GTK_CONTAINER(content), 18);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 9);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 18);
+    gtk_widget_set_size_request(grid, 470, -1);
+    add_property_row(grid, 0, "Name", basename);
+    add_property_row(grid, 1, "Kind", kind);
+    add_property_row(grid, 2, "Location", parent);
+    add_property_row(grid, 3, "Full path", path);
+    add_property_row(grid, 4, "Size", size);
+    add_property_row(grid, 5, "Modified", modified);
+    add_property_row(grid, 6, "Created", created);
+    add_property_row(grid, 7, "Last accessed", accessed);
+    add_property_row(grid, 8, "Content type", content_type);
+    add_property_row(grid, 9, "Owner", owner);
+    add_property_row(grid, 10, "Group", group);
+    add_property_row(grid, 11, "Permissions", permissions);
+    add_property_row(grid, 12, "Readable / writable / deletable", access);
+    if (is_symlink)
+        add_property_row(grid, 13, "Link target",
+                         symlink_target != NULL ? symlink_target
+                                                : "Not available");
+    gtk_box_pack_start(GTK_BOX(content), grid, TRUE, TRUE, 0);
+    gtk_widget_show_all(dialog);
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
-    g_free(detail);
+
     g_free(basename);
+    g_free(parent);
     g_free(size);
+    g_free(modified);
+    g_free(created);
+    g_free(accessed);
+    g_free(content_type);
+    g_free(owner);
+    g_free(group);
+    g_free(permissions);
+    g_free(readable);
+    g_free(writable);
+    g_free(deletable);
+    g_free(access);
     g_object_unref(info);
     g_object_unref(file);
 }
@@ -919,30 +1352,152 @@ create_folder(EasyFile *app)
 }
 
 static void
+create_empty_file(EasyFile *app)
+{
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Create File", GTK_WINDOW(app->window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "_Cancel", GTK_RESPONSE_CANCEL, "_Create", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "File name");
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+    gtk_container_set_border_width(
+        GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), 12);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),
+                       entry, FALSE, FALSE, 0);
+    gtk_widget_show_all(dialog);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        const gchar *name = gtk_entry_get_text(GTK_ENTRY(entry));
+        if (name[0] == '\0' || strchr(name, G_DIR_SEPARATOR) != NULL ||
+            g_str_equal(name, ".") || g_str_equal(name, "..")) {
+            show_error(app, "Invalid file name",
+                       "Enter a simple, non-empty file name.");
+        } else {
+            gchar *path = g_build_filename(app->current_path, name, NULL);
+            GFile *file = g_file_new_for_path(path);
+            GError *error = NULL;
+            GFileOutputStream *stream = g_file_create(
+                file, G_FILE_CREATE_NONE, NULL, &error);
+            if (stream == NULL) {
+                show_error(app, "Could not create file",
+                           error != NULL ? error->message :
+                           "The file could not be created.");
+                g_clear_error(&error);
+            } else {
+                if (!g_output_stream_close(G_OUTPUT_STREAM(stream), NULL,
+                                           &error)) {
+                    show_error(app, "Could not finish creating file",
+                               error != NULL ? error->message :
+                               "The file could not be closed.");
+                    g_clear_error(&error);
+                }
+                g_object_unref(stream);
+                refresh_directory(app);
+            }
+            g_object_unref(file);
+            g_free(path);
+        }
+    }
+    gtk_widget_destroy(dialog);
+}
+
+static void
+open_with_application(EasyFile *app, const gchar *path)
+{
+    GFile *file = g_file_new_for_path(path);
+    GFileInfo *info = g_file_query_info(
+        file, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+        G_FILE_QUERY_INFO_NONE, NULL, NULL);
+    const gchar *content_type = info != NULL
+        ? g_file_info_get_content_type(info) : NULL;
+    if (content_type == NULL) {
+        show_error(app, "Could not choose an application",
+                   "The file's content type could not be determined.");
+        g_clear_object(&info);
+        g_object_unref(file);
+        return;
+    }
+
+    GtkWidget *dialog = gtk_app_chooser_dialog_new_for_content_type(
+        GTK_WINDOW(app->window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, content_type);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_OK) {
+        GAppInfo *application = gtk_app_chooser_get_app_info(
+            GTK_APP_CHOOSER(dialog));
+        if (application != NULL) {
+            gchar *uri = g_file_get_uri(file);
+            GList *uris = g_list_append(NULL, uri);
+            GError *error = NULL;
+            if (!g_app_info_launch_uris(application, uris, NULL, &error)) {
+                show_error(app, "Could not open file",
+                           error != NULL ? error->message :
+                           "The selected application could not open this file.");
+                g_clear_error(&error);
+            }
+            g_list_free_full(uris, g_free);
+            g_object_unref(application);
+        }
+    }
+    gtk_widget_destroy(dialog);
+    g_object_unref(info);
+    g_object_unref(file);
+}
+
+static void
+select_all_items(EasyFile *app)
+{
+    if (g_strcmp0(gtk_stack_get_visible_child_name(GTK_STACK(app->stack)),
+                  "grid") == 0) {
+        gtk_icon_view_select_all(GTK_ICON_VIEW(app->icon_view));
+    } else {
+        gtk_tree_selection_select_all(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(app->tree_view)));
+    }
+}
+
+static void
 on_context_action(GtkMenuItem *item, gpointer user_data)
 {
     EasyFile *app = user_data;
     MenuAction action = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "easy-file-action"));
     if (action == MENU_NEW_FOLDER) {
         create_folder(app);
+    } else if (action == MENU_NEW_FILE) {
+        create_empty_file(app);
     } else if (action == MENU_REFRESH) {
         refresh_directory(app);
+    } else if (action == MENU_SELECT_ALL) {
+        select_all_items(app);
     } else if (action == MENU_COPY_FILES) {
+        g_ptr_array_set_size(app->cut_paths, 0);
         GPtrArray *paths = selected_paths(app);
         copy_paths_to_clipboard(paths);
+        g_ptr_array_unref(paths);
+    } else if (action == MENU_CUT_FILES) {
+        GPtrArray *paths = selected_paths(app);
+        mark_paths_for_cut(app, paths);
         g_ptr_array_unref(paths);
     } else if (action == MENU_PASTE_FILES) {
         paste_files(app);
     } else if (action == MENU_DELETE) {
         delete_selected(app);
+    } else if (action == MENU_PERMANENT_DELETE) {
+        operate_on_trash_selection(app, FALSE);
+    } else if (action == MENU_RESTORE) {
+        operate_on_trash_selection(app, TRUE);
+    } else if (action == MENU_EMPTY_TRASH) {
+        empty_trash(app);
     } else if (action == MENU_ADD_TO_DESKTOP) {
         GPtrArray *paths = selected_paths(app);
         for (guint i = 0; i < paths->len; i++)
             add_to_desktop(app, g_ptr_array_index(paths, i));
         g_ptr_array_unref(paths);
     } else if (app->context_path != NULL) {
-        if (action == MENU_OPEN || action == MENU_OPEN_WITH_DEFAULT)
+        if (action == MENU_OPEN)
             open_path(app, app->context_path, app->context_is_directory);
+        else if (action == MENU_OPEN_WITH_DEFAULT)
+            open_with_application(app, app->context_path);
         else if (action == MENU_COPY_PATH)
             gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD),
                                    app->context_path, -1);
@@ -966,27 +1521,52 @@ static void
 show_context_menu(EasyFile *app, GdkEventButton *event, gboolean has_item)
 {
     GtkWidget *menu = gtk_menu_new();
+    gboolean in_trash = path_is_in_trash(app, app->current_path);
+    GPtrArray *selection = selected_paths(app);
+    gboolean multiple = selection->len > 1;
     g_free(app->context_path);
     app->context_path = has_item ? selected_path(app, &app->context_is_directory) : NULL;
     if (app->context_path != NULL) {
-        add_context_item(menu, app->context_is_directory ? "Open" : "Open with Default App",
-                         MENU_OPEN, app);
-        add_context_item(menu, "Copy", MENU_COPY_FILES, app);
+        if (app->context_is_directory)
+            add_context_item(menu, "Open", MENU_OPEN, app);
+        else {
+            add_context_item(menu, "Open with Default App", MENU_OPEN, app);
+            add_context_item(menu, "Open With…", MENU_OPEN_WITH_DEFAULT, app);
+        }
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu),
+                              gtk_separator_menu_item_new());
+        if (in_trash) {
+            add_context_item(menu, multiple ? "Restore Selection" : "Restore",
+                             MENU_RESTORE, app);
+            add_context_item(menu, multiple ? "Delete Selection Permanently"
+                                            : "Delete Permanently",
+                             MENU_PERMANENT_DELETE, app);
+        } else {
+            add_context_item(menu, "Cut", MENU_CUT_FILES, app);
+            add_context_item(menu, "Copy", MENU_COPY_FILES, app);
+            if (!multiple)
+                add_context_item(menu, "Rename…", MENU_RENAME, app);
+            add_context_item(menu, multiple ? "Move Selection to Trash"
+                                            : "Move to Trash",
+                             MENU_DELETE, app);
+            add_context_item(menu, "Add to Desktop",
+                             MENU_ADD_TO_DESKTOP, app);
+        }
         add_context_item(menu, "Copy Path", MENU_COPY_PATH, app);
         add_context_item(menu, "Properties", MENU_PROPERTIES, app);
-        GPtrArray *selection = selected_paths(app);
-        if (selection->len == 1) {
-            add_context_item(menu, "Rename…", MENU_RENAME, app);
-            add_context_item(menu, "Add to Desktop", MENU_ADD_TO_DESKTOP, app);
-        }
-        if (selection->len > 1)
-            add_context_item(menu, "Add to Desktop", MENU_ADD_TO_DESKTOP, app);
-        g_ptr_array_unref(selection);
-        add_context_item(menu, "Delete", MENU_DELETE, app);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     }
-    add_context_item(menu, "Paste", MENU_PASTE_FILES, app);
-    add_context_item(menu, "New Folder…", MENU_NEW_FOLDER, app);
+    g_ptr_array_unref(selection);
+    if (!in_trash && gtk_clipboard_wait_is_uris_available(
+            gtk_clipboard_get(GDK_SELECTION_CLIPBOARD)))
+        add_context_item(menu, "Paste", MENU_PASTE_FILES, app);
+    if (!in_trash) {
+        add_context_item(menu, "New Folder…", MENU_NEW_FOLDER, app);
+        add_context_item(menu, "New Empty File…", MENU_NEW_FILE, app);
+    }
+    add_context_item(menu, "Select All", MENU_SELECT_ALL, app);
+    if (in_trash)
+        add_context_item(menu, "Empty Trash…", MENU_EMPTY_TRASH, app);
     add_context_item(menu, "Refresh", MENU_REFRESH, app);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *) event);
@@ -1114,8 +1694,24 @@ on_shortcut_selected(GtkListBox *list, GtkListBoxRow *row, gpointer user_data)
     if (row == NULL)
         return;
     path = g_object_get_data(G_OBJECT(row), "easy-file-path");
-    if (path != NULL)
+    if (path != NULL && g_str_equal(path, app->trash_files_path)) {
+        gchar *trash_root = g_path_get_dirname(path);
+        gchar *info_path = g_build_filename(trash_root, "info", NULL);
+        if (g_mkdir_with_parents(path, 0700) != 0 ||
+            g_mkdir_with_parents(info_path, 0700) != 0) {
+            gchar *message = g_strdup_printf(
+                "Could not open Trash at %s: %s", trash_root,
+                g_strerror(errno));
+            set_inline_error(app, message);
+            g_free(message);
+        } else {
+            load_directory(app, path, TRUE);
+        }
+        g_free(info_path);
+        g_free(trash_root);
+    } else if (path != NULL) {
         load_directory(app, path, TRUE);
+    }
 }
 
 static void
@@ -1397,6 +1993,8 @@ build_ui(EasyFile *app)
     common_path = g_build_filename(g_get_home_dir(), "Downloads", NULL);
     add_shortcut(sidebar, "Downloads", "folder-download-symbolic", common_path);
     g_free(common_path);
+    add_shortcut(sidebar, "Trash", "user-trash-symbolic",
+                 app->trash_files_path);
     add_shortcut(sidebar, "Filesystem", "drive-harddisk-symbolic", G_DIR_SEPARATOR_S);
     gtk_box_pack_start(GTK_BOX(sidebar_frame), sidebar_title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(sidebar_frame), sidebar, TRUE, TRUE, 0);
@@ -1455,9 +2053,11 @@ static void
 cleanup(EasyFile *app)
 {
     g_ptr_array_unref(app->history);
+    g_ptr_array_unref(app->cut_paths);
     g_free(app->current_path);
     g_free(app->context_path);
     g_free(app->asset_dir);
+    g_free(app->trash_files_path);
     g_object_unref(app->filter);
     g_object_unref(app->store);
 }
@@ -1469,6 +2069,9 @@ main(int argc, char **argv)
     gtk_init(&argc, &argv);
     app.asset_dir = asset_directory_for(argv[0]);
     app.history = g_ptr_array_new_with_free_func(g_free);
+    app.cut_paths = g_ptr_array_new_with_free_func(g_free);
+    app.trash_files_path = g_build_filename(
+        g_get_user_data_dir(), "Trash", "files", NULL);
     app.history_index = -1;
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_style_context_add_class(gtk_widget_get_style_context(app.window), "easy-file-window");

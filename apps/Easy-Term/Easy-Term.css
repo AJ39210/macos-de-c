@@ -2,6 +2,43 @@ window.easy-term {
     font-family: "Cantarell", "Segoe UI", sans-serif;
 }
 
+window.easy-term .terminal-toolbar {
+    min-height: 38px;
+    padding: 0 8px;
+}
+
+window.easy-term .terminal-toolbar label {
+    font-size: 10pt;
+    font-weight: 600;
+}
+
+window.easy-term.dark .terminal-toolbar button,
+window.easy-term.light .terminal-toolbar button {
+    min-width: 28px;
+    min-height: 26px;
+    padding: 2px 7px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    box-shadow: none;
+}
+
+window.easy-term.dark .terminal-toolbar button {
+    color: #e7e9ee;
+}
+
+window.easy-term.light .terminal-toolbar button {
+    color: #30343b;
+}
+
+window.easy-term.dark .terminal-toolbar button:hover {
+    background: rgba(255, 255, 255, 0.09);
+}
+
+window.easy-term.light .terminal-toolbar button:hover {
+    background: rgba(0, 0, 0, 0.07);
+}
+
 window.easy-term.dark {
     background: #17191e;
     color: #eef0f3;
@@ -37,7 +74,25 @@ window.easy-term.light notebook header {
 }
 
 window.easy-term notebook tab {
-    padding: 7px 10px;
+    min-height: 27px;
+    padding: 4px 10px;
+    border-radius: 7px 7px 0 0;
+}
+
+window.easy-term.dark notebook tab:checked {
+    background: #292d35;
+}
+
+window.easy-term.light notebook tab:checked {
+    background: #ffffff;
+}
+
+window.easy-term.dark notebook header {
+    border-bottom: 1px solid #353a44;
+}
+
+window.easy-term.light notebook header {
+    border-bottom: 1px solid #dfe2e7;
 }
 
 window.easy-term.dark .settings-panel {
@@ -61,7 +116,8 @@ window.easy-term.light .settings-panel {
 }
 
 .status-line {
-    padding: 5px 10px;
+    min-height: 22px;
+    padding: 3px 10px;
     font-size: 9pt;
 }
 
@@ -80,9 +136,28 @@ window.easy-term.light .status-line {
 }
 
 button.tab-close {
-    padding: 0 3px;
+    padding: 0;
     min-height: 18px;
     min-width: 18px;
-    border: 0;
+    border: none;
     background: transparent;
+    box-shadow: none;
+}
+
+window.easy-term.dark button.tab-close {
+    color: #aeb5c0;
+}
+
+window.easy-term.light button.tab-close {
+    color: #626a76;
+}
+
+window.easy-term.dark button.tab-close:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+window.easy-term.light button.tab-close:hover {
+    color: #17191e;
+    background: rgba(0, 0, 0, 0.08);
 }

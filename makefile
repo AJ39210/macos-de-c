@@ -34,6 +34,7 @@ dirs:
 	@mkdir -p $(BUILD_DIR)/assets
 	@mkdir -p $(BUILD_DIR)/css
 	@mkdir -p $(BUILD_DIR)/apps/finder
+	@mkdir -p $(BUILD_DIR)/apps/Easy-monitor
 	@mkdir -p $(BUILD_DIR)/applications
 	@mkdir -p $(BUILD_DIR)/sessions
 	@mkdir -p $(BUILD_DIR)/lib
@@ -55,6 +56,7 @@ apps:
 	@$(MAKE) -s -C apps/screenshoot-manager
 	@$(MAKE) -s -C apps/Easy-File
 	@$(MAKE) -s -C apps/Easy-Term
+	@$(MAKE) -s -C apps/Easy-monitor
 
 copy_resources: dirs
 	@if [ -d "$(ASSETS_DIR)" ]; then cp -r $(ASSETS_DIR)/* $(BUILD_DIR)/assets/; fi
@@ -72,6 +74,7 @@ copy_resources: dirs
 	@printf "[Desktop Entry]\nName=Notification Manager\nComment=macOS-DE notification history and service\nExec=/usr/share/macos-de/apps/Notification-manager/Notification-manager\nIcon=/usr/share/macos-de/apps/Notification-manager/logo.png\nTerminal=false\nType=Application\nCategories=System;\n" > $(BUILD_DIR)/applications/macos-de-notification-manager.desktop
 	@printf "[Desktop Entry]\nName=Easy-File\nComment=Browse files in macOS-DE\nExec=/usr/share/macos-de/apps/Easy-File/Easy-File\nIcon=/usr/share/macos-de/apps/Easy-File/logo.png\nTerminal=false\nType=Application\nCategories=Utility;FileTools;\n" > $(BUILD_DIR)/applications/macos-de-easy-file.desktop
 	@printf "[Desktop Entry]\nName=Easy-Term\nComment=Terminal for macOS-DE\nExec=/usr/share/macos-de/apps/Easy-Term/Easy-Term\nIcon=/usr/share/macos-de/apps/Easy-Term/logo.png\nTerminal=false\nType=Application\nCategories=System;TerminalEmulator;\n" > $(BUILD_DIR)/applications/macos-de-easy-term.desktop
+	@printf "[Desktop Entry]\nName=Easy-monitor\nComment=Monitor system resources\nExec=/usr/share/macos-de/apps/Easy-monitor/Easy-monitor\nIcon=/usr/share/macos-de/apps/Easy-monitor/logo.png\nTerminal=false\nType=Application\nCategories=System;Monitor;\n" > $(BUILD_DIR)/applications/macos-de-easy-monitor.desktop
 
 test: all
 	@which Xephyr > /dev/null || sudo apt-get install -y xserver-xephyr

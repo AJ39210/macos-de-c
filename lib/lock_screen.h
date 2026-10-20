@@ -11,6 +11,8 @@ MacosDeLockScreen *macos_de_lock_screen_new(
     const char *default_wallpaper);
 gboolean macos_de_lock_screen_lock_now(MacosDeLockScreen *lock_screen,
                                        GError **error);
+gboolean macos_de_lock_screen_should_lock_on_startup(
+    const MacosDeLockScreen *lock_screen);
 void macos_de_lock_screen_free(MacosDeLockScreen *lock_screen);
 
 #endif
